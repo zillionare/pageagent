@@ -1,4 +1,4 @@
-// PageAgent popup：桥地址设置（quantclaw）。Chrome 可跑在任意机器，桥地址存 chrome.storage.sync。
+// PageAgent popup：桥地址设置 + 占用检测/接管（quantclaw）。Chrome 可跑在任意机器，桥地址存 chrome.storage.sync。
 const DEFAULT_BRIDGE = 'http://192.168.0.102:8787'
 
 document.getElementById('openOfficial')?.addEventListener('click', (e) => {
@@ -39,6 +39,33 @@ async function refresh() {
   }
 }
 
+async function refreshOccupant() {
+  const box = document.getElementById('occupantBox')
+  const txt = document.getElementById('occupantText')
+  try {
+    const st = await chrome.storage.sync.get({ pageagent_occupant: '' })
+    const occ = String(st.pageagent_occupant || '')
+    if (occ && box && txt) {
+      txt.textContent = `桥被占用：${occ} 正在连接。要在此机器接管（踢掉对方）吗？`
+      box.style.display = 'block'
+    } else if (box) {
+      box.style.display = 'none'
+    }
+  } catch {}
+}
+
+document.getElementById('takeover')?.addEventListener('click', async () => {
+  const txt = document.getElementById('occupantText')
+  if (txt) txt.textContent = '正在接管（踢掉对方）…'
+  try {
+    await chrome.storage.sync.set({ pageagent_force_takeover: Date.now() })
+  } catch {}
+  setTimeout(async () => {
+    await refresh()
+    await refreshOccupant()
+  }, 3000)
+})
+
 document.getElementById('saveBridge')?.addEventListener('click', async () => {
   const v = (input?.value ?? '').trim().replace(/\/$/, '') || DEFAULT_BRIDGE
   await chrome.storage.sync.set({ pageagent_bridge: v })
@@ -47,4 +74,5 @@ document.getElementById('saveBridge')?.addEventListener('click', async () => {
   await refresh()
 })
 
-refresh()
+refresh().then(refreshOccupant)
+setInterval(() => { refresh().then(refreshOccupant) }, 3000)

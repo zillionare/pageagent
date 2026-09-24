@@ -29,6 +29,17 @@ class PageAgentBridgeClient {
     this.connected = false
     this.closed = false
     this.looping = false
+    this.forceTakeover = false // popup 确认踢掉占用者后置 true，下次 /connect 带 force=1
+    this.occupant = null
+    try {
+      chrome.storage.onChanged.addListener((chg, area) => {
+        if (area === 'sync' && chg.pageagent_force_takeover?.newValue) {
+          this.forceTakeover = true
+          chrome.storage.sync.remove('pageagent_force_takeover').catch(() => {})
+          this.wake()
+        }
+      })
+    } catch {}
   }
   start() { this._startLoop() }
   _startLoop() {
@@ -45,19 +56,27 @@ class PageAgentBridgeClient {
         console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥连接失败`, e.message)
       }
       this.connected = false
-      await new Promise(r => setTimeout(r, 5000))
+      await new Promise(r => setTimeout(r, this.occupant ? 15000 : 5000))
     }
   }
   async _connectOnce() {
-    const resp = await fetch(this.base + '/connect', { method: 'POST' })
+    const url = this.forceTakeover ? this.base + '/connect?force=1' : this.base + '/connect'
+    const resp = await fetch(url, { method: 'POST' })
     if (resp.status === 409) {
       let occupant = '?'
       try { occupant = (await resp.json()).occupant ?? '?' } catch {}
+      this.occupant = occupant
       this.connected = false
+      try {
+        await chrome.storage.sync.set({ pageagent_occupant: occupant, pageagent_occupied_at: Date.now() })
+      } catch {}
       console.log('[PageAgent] 桥被占用:', occupant)
       throw new Error('occupied by ' + occupant)
     }
     if (!resp.ok || !resp.body) throw new Error('connect ' + resp.status)
+    this.forceTakeover = false
+    this.occupant = null
+    try { await chrome.storage.sync.remove(['pageagent_occupant', 'pageagent_occupied_at']) } catch {}
     this.connected = true
     console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥已连接`, this.base)
     const reader = resp.body.getReader()
