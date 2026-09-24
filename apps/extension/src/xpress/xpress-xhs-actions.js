@@ -71,9 +71,16 @@
     const input = A.findImageInput()
     if (!input) throw new Error('未找到图片上传输入框')
     await C.setImageFiles(input, upload)
-    await C.waitUntil(() => {
-      return A.countUploadedImages() >= dataUrls.length
-    }, 90000, 400, '图片上传预览出现')
+    // 上传慢（18 张 + 服务端处理）：轮询期间持续上报进度，供渲染页/CF 展示
+    const target = dataUrls.length
+    const t0 = Date.now()
+    for (;;) {
+      const now = A.countUploadedImages()
+      C.progress('uploadImages', `${Math.min(now, target)}/${target} 张`)
+      if (now >= target) break
+      if (Date.now() - t0 > 90000) throw new Error(`图片上传超时（${now}/${target}）`)
+      await C.sleep(1000)
+    }
     await C.sleep(600)
   }
 

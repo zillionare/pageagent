@@ -507,6 +507,17 @@ async function handleMessage(request, sender) {
         console.log('[COSE] 华为开发者用户信息已缓存:', hwdInfo.username)
       }
       return { success: true }
+    // quantclaw: xpress 内容脚本的 CDP 请求与进度上报（cose 通用监听器统一收口，避免双监听抢响应）
+    case 'xpress-cdp-click':
+    case 'xpress-cdp-text':
+    case 'xpress-cdp-shadow':
+      return await xpressCdpHandle(request, sender)
+    case 'xpress-log':
+      pageAgentLog(String(request.step ?? ''), String(request.detail ?? '')).catch(() => {})
+      return { ok: true }
+    case 'pageagent-bridge-changed':
+      try { if (pageAgentBridge) { await pageAgentBridge.reconnect(request.base); return { ok: true } } } catch (e) { return { ok: false, error: String(e?.message ?? e) } }
+      return { ok: false, error: 'bridge not ready' }
     default:
       return { error: 'Unknown message type' }
   }
@@ -4183,14 +4194,7 @@ try {
 try { chrome.runtime.onInstalled.addListener(() => ensurePageAgentAlarm()) } catch {}
 try { chrome.runtime.onStartup.addListener(() => ensurePageAgentAlarm()) } catch {}
 
-// popup 改桥地址 → SW 重连
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'pageagent-bridge-changed' && pageAgentBridge) {
-    pageAgentBridge.reconnect(msg.base).then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: String(e?.message ?? e) }))
-    return true
-  }
-  return false
-})
+// popup 改桥地址 → SW 重连（走 handleMessage 的 pageagent-bridge-changed 分支）
 
 async function handleBridgeRequest(method, params) {
   if (method === 'version') {
@@ -4528,7 +4532,7 @@ async function dispatchXpress(action, payload) {
     return await run()
   } catch (e) {
     const msg = e.message ?? ''
-    if (/message channel closed|message port closed|Receiving end does not exist|Could not establish connection/.test(msg)) {
+    if (/message channel|message port|Receiving end does not exist|Could not establish connection|back\/forward cache/.test(msg)) {
       const t0 = Date.now()
       for (;;) {
         const t = await chrome.tabs.get(target.id).catch(() => null)
@@ -4584,7 +4588,7 @@ async function dispatchZhihuPin(action, payload) {
   try {
     return await run()
   } catch (e) {
-    if (/message channel closed|Receiving end does not exist|Could not establish connection/.test(e.message ?? '')) {
+    if (/message channel|Receiving end does not exist|Could not establish connection|back\/forward cache/.test(e.message ?? '')) {
       try { await chrome.scripting.executeScript({ target: { tabId: target.id }, files: XPRESS_ZHIHU_FILES }) } catch {}
       await new Promise(r => setTimeout(r, 1000))
       return await run()
@@ -4599,78 +4603,70 @@ async function dispatchZhihuPin(action, payload) {
   }
 }
 
-// xpress 内容脚本的 CDP 请求（真实点击/输入/穿透 shadow）与进度日志
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type === 'xpress-log') {
-    pageAgentLog(String(msg.step ?? ''), String(msg.detail ?? '')).catch(() => {})
-    return
-  }
-  if (msg?.type !== 'xpress-cdp-click' && msg?.type !== 'xpress-cdp-text' && msg?.type !== 'xpress-cdp-shadow') return
-  ;(async () => {
-    let attached = false
-    const tabId = sender.tab?.id
-    try {
-      if (!tabId) throw new Error('无标签页上下文')
-      await chrome.debugger.attach({ tabId }, '1.3')
-      attached = true
-      if (msg.type === 'xpress-cdp-text') {
-        const enterDown = { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
-        const enterUp = { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
-        const lines = String(msg.text ?? '').split('\n')
-        for (let i = 0; i < lines.length; i++) {
-          if (i > 0) {
-            await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', enterDown)
-            await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', enterUp)
-            await new Promise(r => setTimeout(r, 150))
-          }
-          const line = lines[i]
-          if (line) {
-            await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: line })
-            await new Promise(r => setTimeout(r, 80))
-          }
+// xpress 内容脚本的 CDP 操作（真实点击/输入/穿透 shadow）
+async function xpressCdpHandle(msg, sender) {
+  let attached = false
+  const tabId = sender.tab?.id
+  try {
+    if (!tabId) throw new Error('无标签页上下文')
+    await chrome.debugger.attach({ tabId }, '1.3')
+    attached = true
+    if (msg.type === 'xpress-cdp-text') {
+      const enterDown = { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
+      const enterUp = { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
+      const lines = String(msg.text ?? '').split('\n')
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) {
+          await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', enterDown)
+          await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', enterUp)
+          await new Promise(r => setTimeout(r, 150))
         }
-        sendResponse({ ok: true, lines: lines.length })
-      } else if (msg.type === 'xpress-cdp-click') {
-        const press = { type: 'mousePressed', x: msg.x, y: msg.y, button: 'left', clickCount: 1 }
-        const release = { type: 'mouseReleased', x: msg.x, y: msg.y, button: 'left', clickCount: 1 }
-        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', press)
-        await new Promise(r => setTimeout(r, 30))
-        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', release)
-        sendResponse({ ok: true })
-      } else {
-        const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: -1, pierce: true })
-        const found = []
-        const walk = (node) => {
-          if (!node) return
-          if (node.nodeName === 'BUTTON') found.push(node)
-          for (const c of node.children ?? []) walk(c)
-          for (const sr of node.shadowRoots ?? []) walk(sr)
-          if (node.contentDocument) walk(node.contentDocument)
+        const line = lines[i]
+        if (line) {
+          await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: line })
+          await new Promise(r => setTimeout(r, 80))
         }
-        walk(root)
-        const out = []
-        for (const b of found) {
-          const html = (await chrome.debugger.sendCommand({ tabId }, 'DOM.getOuterHTML', { nodeId: b.nodeId })) ?? ''
-          if (/ce-btn|暂存|发布/.test(html)) {
-            let box = null
-            try {
-              const r = await chrome.debugger.sendCommand({ tabId }, 'DOM.getBoxModel', { nodeId: b.nodeId })
-              const q = r?.model?.border
-              if (q && q.length === 8) {
-                box = { x: (q[0] + q[2] + q[4] + q[6]) / 4, y: (q[1] + q[3] + q[5] + q[7]) / 4 }
-              }
-            } catch {}
-            out.push({ html: html.slice(0, 140), x: box?.x, y: box?.y })
-          }
-        }
-        sendResponse({ ok: true, buttons: out })
       }
-    } catch (e) {
-      sendResponse({ error: e.message ?? String(e) })
-    } finally {
-      if (attached) { try { await chrome.debugger.detach({ tabId }) } catch {} }
+      return { ok: true, lines: lines.length }
     }
-  })()
-  return true
-})
-
+    if (msg.type === 'xpress-cdp-click') {
+      const press = { type: 'mousePressed', x: msg.x, y: msg.y, button: 'left', clickCount: 1 }
+      const release = { type: 'mouseReleased', x: msg.x, y: msg.y, button: 'left', clickCount: 1 }
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', press)
+      await new Promise(r => setTimeout(r, 30))
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', release)
+      return { ok: true }
+    }
+    // xpress-cdp-shadow：穿透 closed shadow 查询按钮真实坐标
+    const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: -1, pierce: true })
+    const found = []
+    const walk = (node) => {
+      if (!node) return
+      if (node.nodeName === 'BUTTON') found.push(node)
+      for (const c of node.children ?? []) walk(c)
+      for (const sr of node.shadowRoots ?? []) walk(sr)
+      if (node.contentDocument) walk(node.contentDocument)
+    }
+    walk(root)
+    const out = []
+    for (const b of found) {
+      const html = (await chrome.debugger.sendCommand({ tabId }, 'DOM.getOuterHTML', { nodeId: b.nodeId })) ?? ''
+      if (/ce-btn|暂存|发布/.test(html)) {
+        let box = null
+        try {
+          const r = await chrome.debugger.sendCommand({ tabId }, 'DOM.getBoxModel', { nodeId: b.nodeId })
+          const q = r?.model?.border
+          if (q && q.length === 8) {
+            box = { x: (q[0] + q[2] + q[4] + q[6]) / 4, y: (q[1] + q[3] + q[5] + q[7]) / 4 }
+          }
+        } catch {}
+        out.push({ html: html.slice(0, 140), x: box?.x, y: box?.y })
+      }
+    }
+    return { ok: true, buttons: out }
+  } catch (e) {
+    return { error: e.message ?? String(e) }
+  } finally {
+    if (attached) { try { await chrome.debugger.detach({ tabId }) } catch {} }
+  }
+}
