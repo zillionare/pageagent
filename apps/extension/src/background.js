@@ -863,7 +863,34 @@ async function syncToPlatform(platformId, content) {
       await new Promise(resolve => setTimeout(resolve, 1000))
 
       // quantclaw: markdown 优先（编辑器导入路径自拉图；HTML 粘贴会被过滤 img）
-      const mdContent = content.markdown || ''
+      // 若含公式：先 POST 本机 content-factory /api/formula/replace-md，替换成图床图片
+      // （小红书长文不支持 LaTeX）；CF 地址默认由桥地址推导 host:替换端口8765，可 storage 覆盖
+      let mdContent = content.markdown || ''
+      if (/\$\$|(?<!\$)\$[^$\n]{1,120}\$/.test(mdContent)) {
+        try {
+          const _bb2 = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787', pageagent_cf: '' })
+          let cfBase = String(_bb2.pageagent_cf || '').trim()
+          if (!cfBase) {
+            cfBase = String(_bb2.pageagent_bridge || 'http://192.168.0.102:8787')
+              .replace(/:\d+/, ':8765').replace(/\/$/, '')
+          }
+          cfBase = cfBase.replace(/\/$/, '')
+          const r = await fetch(cfBase + '/api/formula/replace-md', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ markdown: mdContent }),
+          })
+          if (r.ok) {
+            const j = await r.json().catch(() => null)
+            if (j?.success && j.count) {
+              mdContent = j.markdown
+              pageAgentLog('xhs-formula', `count=${j.count}, total=${j.total}, errs=${(j.errors ?? []).length}`)
+            }
+          }
+        } catch (e) {
+          console.log('[PageAgent] 公式替换失败，按原样导入:', e?.message ?? e)
+        }
+      }
       const htmlContent = content.wechatHtml || content.body
       console.log('[COSE] 小红书 markdown 长度:', mdContent.length, 'HTML 长度:', htmlContent?.length || 0)
 
