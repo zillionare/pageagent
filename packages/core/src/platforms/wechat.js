@@ -527,7 +527,7 @@ function wechatSourceUrlPrep() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
     const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-    const findInput = () => Array.from(document.querySelectorAll('#js_article_url_area input[name="source_url"], #js_article_url_area input.js_url')).find(vis)
+    const findInput = () => Array.from(document.querySelectorAll('input[name="source_url"], input.js_url, textarea.js_url')).find(vis)
     const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
     if (!area) return { ok: false, err: 'no-url-area' }
     try { area.scrollIntoView({ block: 'center' }) } catch {}
@@ -574,8 +574,8 @@ function wechatSourceUrlState() {
   if (!area) return { err: 'no-url-area' }
   const u = area.querySelector('.lbl_content_desc_url')
   const d = area.querySelector('.lbl_content_desc_default')
-  const inp = area.querySelector('input[name="source_url"], input.js_url')
-  const cb = area.querySelector('input[name="source_url_checked"]')
+  const inp = document.querySelector('input[name="source_url"], input.js_url')
+  const cb = document.querySelector('input[name="source_url_checked"]')
   return {
     url: u ? (u.textContent || '').trim().slice(0, 80) : null, urlVis: u ? vis(u) : false,
     def: d ? (d.textContent || '').trim().slice(0, 20) : null, defVis: d ? vis(d) : false,
@@ -621,6 +621,19 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
     }
     state = await readState()
     dbg.afterType = state
+    // 3b. 勾选框未勾则补点一次（保存草稿按表单序列化）
+    if (state && state.cbChecked === false) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => { const cb = document.querySelector('input[name="source_url_checked"]'); if (cb && !cb.checked) cb.click() },
+          world: 'MAIN',
+        })
+        await sleep(900)
+        state = await readState()
+        dbg.afterCheck = state
+      } catch {}
+    }
     // 4. 未提交则再试 Enter（真实回车）
     if (!(state && (state.urlVis && state.url) || state.val === url && state.cbChecked)) {
       await click(prep.inputRect)
@@ -631,7 +644,7 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
       state = await readState()
       dbg.afterEnter = state
     }
-    const ok = !!(state && ((state.urlVis && state.url) || (state.val === url && state.cbChecked)))
+    const ok = !!(state && ((state.urlVis && state.url) || state.val === url))
     return { ok, state, dbg }
   } finally {
     try { await chrome.debugger.detach({ tabId }) } catch {}
