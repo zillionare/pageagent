@@ -259,7 +259,7 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
   }
 }
 
-// 微信公众号封面：往隐藏 input[type=file] 直塞文件（触发它自己的上传→裁剪框）→ 点确认 → 等生效
+// 微信公众号封面：点击封面区让输入框现身 → 只认 bmp 变体 input 直塞 → 等裁剪框 → 点确认 → 等生效
 function wechatSetCoverByDrop(coverUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -268,6 +268,8 @@ function wechatSetCoverByDrop(coverUrl) {
       const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
       return hit.length ? hit[hit.length - 1] : null
     }
+    const coverInputs = () => Array.from(document.querySelectorAll('input[type="file"]'))
+      .filter(i => /bmp/i.test(i.accept || ''))
     const dbg = {}
     try {
       const resp = await fetch(coverUrl)
@@ -275,22 +277,34 @@ function wechatSetCoverByDrop(coverUrl) {
       const blob = await resp.blob()
       const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0]
       const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
-      // 候选 input：accept 含 bmp 的优先（封面控件的特征），其余兜底逐个试
-      const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
-      const ordered = [
-        ...inputs.filter(i => /bmp/i.test(i.accept || '')),
-        ...inputs.filter(i => !(/bmp/i.test(i.accept || '')) && /image/i.test(i.accept || '')),
-      ]
-      dbg.inputCount = inputs.length
+      // 点击封面区，触发其懒加载的封面 input
+      const area = document.querySelector('#js_cover_area') || document.querySelector('.js_cover_btn_area')
+      if (!area) return { ok: false, err: 'no-cover-area' }
+      try { area.scrollIntoView({ block: 'center' }) } catch {}
+      await sleep(300)
+      const clickTarget = document.querySelector('.js_cover_btn_area') || area
+      try { clickTarget.click() } catch {}
+      await sleep(1200)
+      dbg.inputsAfterClick = Array.from(document.querySelectorAll('input[type="file"]'))
+        .map(i => String(i.accept || '').slice(0, 50))
+      let inputs = coverInputs()
+      if (!inputs.length) {
+        // 再点一次 / 等一会
+        try { clickTarget.click() } catch {}
+        await sleep(1500)
+        inputs = coverInputs()
+        dbg.inputsAfterClick2 = Array.from(document.querySelectorAll('input[type="file"]'))
+          .map(i => String(i.accept || '').slice(0, 50))
+      }
       let dlg = null
       const tried = []
-      for (const inp of ordered) {
+      for (const inp of inputs) {
         const dt = new DataTransfer()
         dt.items.add(file)
         try { inp.files = dt.files } catch {}
         inp.dispatchEvent(new Event('change', { bubbles: true }))
         inp.dispatchEvent(new Event('input', { bubbles: true }))
-        await sleep(1500)
+        await sleep(1800)
         dlg = realDialog()
         tried.push({ accept: String(inp.accept || '').slice(0, 40), dlg: !!dlg })
         if (dlg) break
@@ -320,9 +334,9 @@ function wechatSetCoverByDrop(coverUrl) {
           crop = { err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 10) }
         }
       } else {
-        crop = { err: 'no-dialog-after-file' }
+        crop = { err: inputs.length ? 'no-dialog-after-file' : 'no-cover-input' }
       }
-      // 等封面预览出现（背景图含 url( 且非空 / 或 img）
+      // 等封面预览出现
       const t0 = Date.now()
       while (Date.now() - t0 < 30000) {
         const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
@@ -335,6 +349,51 @@ function wechatSetCoverByDrop(coverUrl) {
         await sleep(800)
       }
       return { ok: false, err: 'cover-preview-timeout', crop, dbg }
+    } catch (e) {
+      return { ok: false, err: String(e && e.message || e), dbg }
+    }
+  })()
+}
+
+// 微信公众号「原文链接」字段（正文禁外链，唯一出路）
+function wechatSetSourceUrl(blogUrl) {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const dbg = {}
+    const findInput = () => {
+      const all = Array.from(document.querySelectorAll('input'))
+        .filter(i => !['checkbox', 'radio', 'file', 'hidden', 'submit', 'button'].includes((i.type || 'text')))
+      return all.find(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
+    }
+    try {
+      let inp = findInput()
+      if (!inp) {
+        // 勾选/点击「原文链接」开关后 input 才会出现
+        const toggle = document.querySelector('input[name="source_url_checked"]')
+          || Array.from(document.querySelectorAll('label, span, a, button')).find(el => (el.textContent || '').trim() === '原文链接' && vis(el))
+        if (toggle) {
+          try { toggle.click() } catch {}
+          await sleep(800)
+          inp = findInput()
+        }
+      }
+      dbg.found = !!inp
+      if (!inp) {
+        dbg.urlLikeInputs = Array.from(document.querySelectorAll('input')).map(i => ({
+          type: i.type, name: i.name, cls: String(i.className).slice(0, 40), ph: (i.placeholder || '').slice(0, 20), vis: vis(i),
+        })).slice(0, 30)
+        return { ok: false, err: 'no-url-input', dbg }
+      }
+      inp.focus()
+      const proto = inp.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set
+      if (setter) setter.call(inp, blogUrl); else inp.value = blogUrl
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      inp.dispatchEvent(new Event('change', { bubbles: true }))
+      inp.dispatchEvent(new Event('blur', { bubbles: true }))
+      await sleep(500)
+      return { ok: true, value: String(inp.value || '').slice(0, 80) }
     } catch (e) {
       return { ok: false, err: String(e && e.message || e), dbg }
     }
@@ -528,6 +587,21 @@ async function syncWechatContent(tab, content, helpers) {
     await new Promise(resolve => setTimeout(resolve, 2000))
   }
 
+  // 步骤5c：原文链接字段（公众号正文禁外链）
+  let srcRes = null
+  if (content.blogUrl) {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: wechatSetSourceUrl,
+        args: [content.blogUrl],
+        world: 'MAIN',
+      })
+      srcRes = result
+    } catch (e) { srcRes = { ok: false, err: String(e?.message ?? e) } }
+    console.log('[COSE] 微信原文链接结果:', JSON.stringify(srcRes))
+  }
+
   // 步骤6：保存为草稿（点击 + 验证提示）
   await new Promise(resolve => setTimeout(resolve, 500))
   let saveRes = null
@@ -547,8 +621,8 @@ async function syncWechatContent(tab, content, helpers) {
     await fetch(((bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '')) + '/log', {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ step: '[pageagent] wechat-done', detail: JSON.stringify({
-        cover: coverRes, save: saveRes, wordCount: fillResult.wordCount, imageCount: fillResult.imageCount,
-      }).slice(0, 900) }),
+        cover: coverRes, sourceUrl: srcRes, save: saveRes, wordCount: fillResult.wordCount, imageCount: fillResult.imageCount,
+      }).slice(0, 1200) }),
     })
   } catch {}
 

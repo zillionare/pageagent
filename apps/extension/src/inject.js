@@ -553,6 +553,7 @@
                 markdown: post.markdown,
                 thumb: post.thumb,
                 desc: post.desc,
+                blogUrl: post.blogUrl || '',
                 // 微信公众号等平台使用带内联样式的 HTML：
                 // 优先 marktwain 直算的 post.wechatHtml（自托管 http 页剪贴板读不到时的可靠路径），
                 // 兜底剪贴板里读到的 clipboardHtmlContent

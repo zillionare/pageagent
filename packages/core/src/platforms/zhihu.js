@@ -410,11 +410,18 @@ async function syncZhihuContent(tab, content, helpers) {
       }).slice(0, 300) }),
     })
   } catch {}
+  // quantclaw: 知乎文末附官网原文链接（知乎允许外链；公众号禁外链，走它自己的原文链接字段）
+  let zhihuMd = String(content.markdown || '')
+  if (content.blogUrl && !zhihuMd.includes(content.blogUrl)) {
+    zhihuMd = zhihuMd.replace(/\s+$/, '')
+      + `\n\n---\n\n本文首发于[匡醍量化](${content.blogUrl})。`
+      + `本文如包含有源码和可运行的程序，请前往[匡醍量化](${content.blogUrl})获取。\n`
+  }
   // 在页面中执行内容填充
   const result = await globalThis.chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: fillZhihuContent,
-    args: [content.title, content.markdown, content.thumb || content.cover || null, content.tags || [], _bridgeBase],
+    args: [content.title, zhihuMd, content.thumb || content.cover || null, content.tags || [], _bridgeBase],
     world: 'MAIN',
   })
 

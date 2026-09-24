@@ -4337,6 +4337,16 @@ async function probeWechatFindText(params) {
         }
       }
       out.inputsNear = out.inputsNear.slice(0, 20)
+      out.allUrlInputs = Array.from(document.querySelectorAll('input, textarea'))
+        .filter(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
+        .map(i => ({ tag: i.tagName, type: i.type, name: i.name, cls: String(i.className).slice(0, 50), ph: (i.placeholder || '').slice(0, 30), vis: vis(i) }))
+        .slice(0, 15)
+      const hit0 = els.filter(vis)[0]
+      if (hit0) {
+        let ctx = hit0
+        for (let i = 0; i < 3 && ctx.parentElement; i++) ctx = ctx.parentElement
+        out.parentHtml = ctx.outerHTML.slice(0, 1800)
+      }
       return out
     },
     args: [String(params.findText)],
