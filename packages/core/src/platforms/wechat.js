@@ -522,6 +522,107 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
   }
 }
 
+// 原文链接·阶段1（页面主世界）：确保开启 + 点入口唤出行内输入，返回坐标集
+function wechatSourceUrlPrep() {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const findInput = () => Array.from(document.querySelectorAll('#js_article_url_area input[name="source_url"], #js_article_url_area input.js_url')).find(vis)
+    const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+    if (!area) return { ok: false, err: 'no-url-area' }
+    try { area.scrollIntoView({ block: 'center' }) } catch {}
+    await sleep(400)
+    const cb = area.querySelector('input[name="source_url_checked"]')
+    const allow = area.querySelector('.js_article_url_allow_click')
+    let inp = findInput()
+    const steps = []
+    if (!inp && cb && !cb.checked) { try { cb.click() } catch {} ; await sleep(700); steps.push('cb'); inp = findInput() }
+    if (!inp) { try { (allow || cb || area).click() } catch {} ; await sleep(800); steps.push('allow'); inp = findInput() }
+    if (!inp) { await sleep(1500); inp = findInput(); steps.push('wait') }
+    if (!inp) return { ok: false, err: 'no-inline-input', steps }
+    const r = inp.getBoundingClientRect()
+    const title = document.querySelector('#title')
+    const tr = title ? title.getBoundingClientRect() : null
+    return {
+      ok: true, steps,
+      inputRect: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) },
+      cbChecked: cb ? cb.checked : null,
+      blurRect: tr ? { x: Math.round(tr.left + 40), y: Math.round(tr.top + 12) } : { x: Math.round(r.left), y: Math.round(r.bottom + 30) },
+    }
+  })()
+}
+
+// 原文链接·状态（页面主世界）：读 UI 与输入值
+function wechatSourceUrlState() {
+  const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+  const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+  if (!area) return { err: 'no-url-area' }
+  const u = area.querySelector('.lbl_content_desc_url')
+  const d = area.querySelector('.lbl_content_desc_default')
+  const inp = area.querySelector('input[name="source_url"], input.js_url')
+  const cb = area.querySelector('input[name="source_url_checked"]')
+  return {
+    url: u ? (u.textContent || '').trim().slice(0, 80) : null, urlVis: u ? vis(u) : false,
+    def: d ? (d.textContent || '').trim().slice(0, 20) : null, defVis: d ? vis(d) : false,
+    val: inp ? String(inp.value || '').slice(0, 80) : null,
+    cbChecked: cb ? cb.checked : null,
+  }
+}
+
+// 原文链接（SW 侧）：CDP 真实点击+逐字键入（页面 JS 校验 isTrusted，合成事件不算）
+async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const dbg = {}
+  const [{ result: prep }] = await chrome.scripting.executeScript({
+    target: { tabId }, func: wechatSourceUrlPrep, world: 'MAIN',
+  })
+  dbg.prep = prep
+  if (!prep || !prep.ok) return { ok: false, err: (prep && prep.err) || 'prep-failed', dbg }
+  await chrome.debugger.attach({ tabId }, '1.3')
+  const click = async (pt) => {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type, x: pt.x, y: pt.y, button: 'left', clickCount: 1 })
+      await sleep(70)
+    }
+  }
+  try {
+    // 1. 真实点击输入框聚焦
+    await click(prep.inputRect)
+    await sleep(300)
+    // 2. 逐字键入（keyDown+keyUp 真实事件链）
+    for (const ch of String(url)) {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', text: ch, unmodifiedText: ch, key: ch })
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', key: ch })
+      await sleep(18)
+    }
+    await sleep(400)
+    // 3. 点标题区失焦（原生 blur/change → 他们的提交逻辑）
+    await click(prep.blurRect)
+    await sleep(1500)
+    let state = null
+    const readState = async () => {
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func: wechatSourceUrlState, world: 'MAIN' })
+      return result || {}
+    }
+    state = await readState()
+    dbg.afterType = state
+    // 4. 未提交则再试 Enter（真实回车）
+    if (!(state && (state.urlVis && state.url) || state.val === url && state.cbChecked)) {
+      await click(prep.inputRect)
+      await sleep(200)
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+      await sleep(1200)
+      state = await readState()
+      dbg.afterEnter = state
+    }
+    const ok = !!(state && ((state.urlVis && state.url) || (state.val === url && state.cbChecked)))
+    return { ok, state, dbg }
+  } finally {
+    try { await chrome.debugger.detach({ tabId }) } catch {}
+  }
+}
+
 // 微信公众号「原文链接」v3：多目标逐个点（勾选框最可能开弹窗）→ 等弹窗/行内输入 → 填 → 确认 → 验证
 function wechatSetSourceUrl(blogUrl) {
   return (async () => {
@@ -826,18 +927,22 @@ async function syncWechatContent(tab, content, helpers) {
     await new Promise(resolve => setTimeout(resolve, 1500))
   }
 
-  // 步骤5c：原文链接字段（公众号正文禁外链）
+  // 步骤5c：原文链接字段（公众号正文禁外链）——CDP 真实键入，失败回退页面事件版
   let srcRes = null
   if (content.blogUrl) {
     try {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: wechatSetSourceUrl,
-        args: [content.blogUrl],
-        world: 'MAIN',
-      })
-      srcRes = result
-    } catch (e) { srcRes = { ok: false, err: String(e?.message ?? e) } }
+      srcRes = await setWechatSourceUrlViaCDP(tab.id, content.blogUrl, chrome)
+    } catch (e) {
+      try {
+        const [{ result }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: wechatSetSourceUrl,
+          args: [content.blogUrl],
+          world: 'MAIN',
+        })
+        srcRes = { via: 'fallback', ...(result || {}) }
+      } catch (e2) { srcRes = { ok: false, err: String(e2?.message ?? e2) } }
+    }
     console.log('[COSE] 微信原文链接结果:', JSON.stringify(srcRes))
   }
 

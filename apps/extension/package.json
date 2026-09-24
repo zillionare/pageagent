@@ -1,6 +1,6 @@
 {
   "name": "pageagent",
-  "version": "1.4.29",
+  "version": "1.4.30",
   "description": "PageAgent - 多平台文章同步与抓取（quantclaw fork自doocs/cose）",
   "type": "module",
   "scripts": {
