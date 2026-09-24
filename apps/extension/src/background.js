@@ -4161,6 +4161,7 @@ let pageAgentBridge = null
 try {
   ensurePageAgentBridge(handleBridgeRequest).then((c) => {
     pageAgentBridge = c
+    ensurePageAgentAlarm()
     console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥客户端就绪`)
   }).catch((e) => {
     console.log('[PageAgent] 桥初始化失败', e?.message ?? e)
@@ -4168,6 +4169,20 @@ try {
 } catch (e) {
   console.log('[PageAgent] 桥初始化异常', e?.message ?? e)
 }
+// MV3 keepalive：SW 空闲 ~30s 被冻结导致断桥；alarm 周期唤醒重连（对齐旧 xpress 行为）
+function ensurePageAgentAlarm() {
+  try { chrome.alarms.create('pageagent-bridge', { periodInMinutes: 0.5 }) } catch {}
+}
+try {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'pageagent-bridge') {
+      try { pageAgentBridge && pageAgentBridge.wake() } catch {}
+    }
+  })
+} catch {}
+try { chrome.runtime.onInstalled.addListener(() => ensurePageAgentAlarm()) } catch {}
+try { chrome.runtime.onStartup.addListener(() => ensurePageAgentAlarm()) } catch {}
+
 // popup 改桥地址 → SW 重连
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'pageagent-bridge-changed' && pageAgentBridge) {
