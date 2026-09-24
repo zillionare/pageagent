@@ -472,27 +472,43 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
     if (!pt) throw new Error('未找到封面区')
     dbg.pt = pt
     chrome.debugger.onEvent.addListener(onEvent)
-    for (const type of ['mousePressed', 'mouseReleased']) {
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type, x: pt.x, y: pt.y, button: 'left', clickCount: 1 })
-      await sleep(90)
-    }
-    const t1 = Date.now()
-    while (Date.now() - t1 < 8000 && !dbg.chooser) await sleep(200)
-    if (!dbg.chooser) {
-      dbg.afterClickInputs = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => Array.from(document.querySelectorAll('input[type="file"]')).map(i => String(i.accept || '').slice(0, 50)),
-        world: 'MAIN',
-      }).then(r => r[0].result)
-      return { ok: false, err: 'no-file-chooser', dbg }
-    }
-    await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', { files: [absPath], backendNodeId: dbg.chooser.backendNodeId })
-    await sleep(1200)
+    // 路线A：CDP 真实文件拖放（还原人手从 Finder 拖图）——drop 后应出裁剪框
+    const dragData = { items: [], files: [absPath], dragOperationsMask: 1 }
     try {
-      const [{ result: nudge }] = await chrome.scripting.executeScript({ target: { tabId }, func: nudgeWechatCoverInput, world: 'MAIN' })
-      dbg.nudge = nudge
-    } catch {}
-    await sleep(1200)
+      for (const type of ['dragEnter', 'dragOver']) {
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchDragEvent', { type, x: pt.x, y: pt.y, data: dragData })
+        await sleep(250)
+      }
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchDragEvent', { type: 'drop', x: pt.x, y: pt.y, data: dragData })
+      dbg.dragDispatched = true
+    } catch (e) { dbg.dragErr = String(e?.message ?? e) }
+    await sleep(2500)
+    let [{ result: hasDlg }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).some(el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }),
+      world: 'MAIN',
+    })
+    dbg.dialogAfterDrag = !!hasDlg
+    // 路线B：点击 + 拦截文件选择器（备用）
+    if (!dbg.dialogAfterDrag) {
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type, x: pt.x, y: pt.y, button: 'left', clickCount: 1 })
+        await sleep(90)
+      }
+      const t1 = Date.now()
+      while (Date.now() - t1 < 5000 && !dbg.chooser) await sleep(200)
+      if (dbg.chooser) {
+        await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', { files: [absPath], backendNodeId: dbg.chooser.backendNodeId })
+        await sleep(1200)
+        try {
+          const [{ result: nudge }] = await chrome.scripting.executeScript({ target: { tabId }, func: nudgeWechatCoverInput, world: 'MAIN' })
+          dbg.nudge = nudge
+        } catch {}
+        await sleep(1200)
+      } else {
+        dbg.chooserMiss = true
+      }
+    }
     // 4. 裁剪确认
     const [{ result: crop }] = await chrome.scripting.executeScript({ target: { tabId }, func: clickWechatCropConfirm, world: 'MAIN' })
     dbg.crop = crop
