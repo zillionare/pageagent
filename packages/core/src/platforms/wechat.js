@@ -536,9 +536,24 @@ function wechatSourceUrlPrep() {
     const allow = area.querySelector('.js_article_url_allow_click')
     let inp = findInput()
     const steps = []
-    if (!inp && cb && !cb.checked) { try { cb.click() } catch {} ; await sleep(700); steps.push('cb'); inp = findInput() }
-    if (!inp) { try { (allow || cb || area).click() } catch {} ; await sleep(800); steps.push('allow'); inp = findInput() }
-    if (!inp) { await sleep(1500); inp = findInput(); steps.push('wait') }
+    const poll = async (ms) => {
+      const t0 = Date.now()
+      while (Date.now() - t0 < ms) {
+        inp = findInput()
+        if (inp) return true
+        await sleep(300)
+      }
+      return false
+    }
+    // 入口是 toggle：每次点击翻转显示，切忌连点两次。点一次 → 长轮询等出现
+    if (!inp) {
+      const toggles = [['allow', allow], ['cb', cb], ['area', area]].filter(x => x[1])
+      for (const [name, el] of toggles) {
+        try { el.click() } catch {}
+        steps.push(name)
+        if (await poll(2500)) break
+      }
+    }
     if (!inp) return { ok: false, err: 'no-inline-input', steps }
     const r = inp.getBoundingClientRect()
     const title = document.querySelector('#title')
