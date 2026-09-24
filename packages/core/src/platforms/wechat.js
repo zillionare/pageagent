@@ -259,11 +259,12 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
   }
 }
 
-// 微信公众号封面：拖拽图片到封面区（#js_cover_area，支持「拖拽或选择封面」）
+// 微信公众号封面：拖拽图片到封面区 → 裁剪框点确定 → 等封面生效
 function wechatSetCoverByDrop(coverUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
     const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const dbg = {}
     try {
       const area = document.querySelector('#js_cover_area')
       if (!area) return { ok: false, err: 'no-cover-area' }
@@ -274,34 +275,60 @@ function wechatSetCoverByDrop(coverUrl) {
       const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
       const dt = new DataTransfer()
       dt.items.add(file)
-      const targets = [
-        document.querySelector('.cover_drop_inner_wrp'),
-        document.querySelector('.select-cover_outer_drop'),
-        document.querySelector('.js_cover_btn_area'),
-        area,
-      ].filter(Boolean)
-      for (const tgt of targets) {
-        for (const type of ['dragenter', 'dragover', 'drop']) {
-          tgt.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
-          await sleep(120)
+      // 单目标拖拽（子节点冒泡覆盖祖先监听；多目标会导致图标连闪）
+      const target = document.querySelector('.cover_drop_inner_wrp') || document.querySelector('.select-cover_outer_drop') || area
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
+        await sleep(150)
+      }
+      // 等裁剪框出现
+      const dlgSel = '.weui-desktop-dialog, [role="dialog"], [class*="crop" i], [class*="dialog" i]'
+      let dlg = null
+      const t1 = Date.now()
+      while (Date.now() - t1 < 12000) {
+        dlg = Array.from(document.querySelectorAll(dlgSel))
+          .find(d => vis(d) && d.querySelector('img, canvas, [class*="crop" i]'))
+        if (dlg) break
+        await sleep(500)
+      }
+      dbg.dlgCls = dlg ? String(dlg.className).slice(0, 70) : null
+      let crop = null
+      if (dlg) {
+        const findOk = () => Array.from(dlg.querySelectorAll('button, a, [class*="btn" i]'))
+          .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && vis(b))
+        let okBtn = null
+        const t2 = Date.now()
+        while (Date.now() - t2 < 10000) {
+          okBtn = findOk()
+          if (okBtn && !okBtn.disabled && !/disabled/.test(String(okBtn.className || ''))) break
+          await sleep(500)
         }
+        if (okBtn) {
+          crop = { clicked: (okBtn.textContent || '').trim().slice(0, 8) }
+          okBtn.click()
+          await sleep(1500)
+        } else {
+          crop = { err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button, [class*="btn" i]')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 10)).slice(0, 10) }
+        }
+      } else {
+        crop = { err: 'no-crop-dialog' }
       }
       // 等封面预览出现（背景图/display 变化）
       const t0 = Date.now()
       while (Date.now() - t0 < 30000) {
         const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
-        if (prev) {
+        if (prev && vis(prev)) {
           const bg = (prev.style && prev.style.backgroundImage) || ''
-          if (bg && bg !== 'none' && !bg.includes('url(\"\")')) return { ok: true, via: 'preview-bg', bg: bg.slice(0, 80) }
-          if (prev.style.display && prev.style.display !== 'none') return { ok: true, via: 'preview-shown' }
+          if (bg && bg !== 'none' && !bg.includes('url(\"\")')) return { ok: true, via: 'preview-bg', crop, dbg }
+          if (prev.style.display && prev.style.display !== 'none') return { ok: true, via: 'preview-shown', crop, dbg }
           const img = prev.querySelector('img')
-          if (img && img.src) return { ok: true, via: 'preview-img', src: String(img.src).slice(0, 80) }
+          if (img && img.src) return { ok: true, via: 'preview-img', crop, dbg }
         }
         await sleep(800)
       }
-      return { ok: false, err: 'cover-preview-timeout' }
+      return { ok: false, err: 'cover-preview-timeout', crop, dbg }
     } catch (e) {
-      return { ok: false, err: String(e && e.message || e) }
+      return { ok: false, err: String(e && e.message || e), dbg }
     }
   })()
 }
