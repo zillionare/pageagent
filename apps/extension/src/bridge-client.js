@@ -4,14 +4,23 @@
 
 const PAGEAGENT_BRIDGE_DEFAULT = 'http://192.168.0.102:8787'
 
-export async function ensurePageAgentBridge(handler, opts = {}) {
-  const base = opts.base
-    ?? (await chrome.storage.sync.get({ pageagent_bridge: PAGEAGENT_BRIDGE_DEFAULT }).catch(() => ({}))).pageagent_bridge
-    ?? PAGEAGENT_BRIDGE_DEFAULT
+async function getBridgeBase() {
+  try {
+    const st = await chrome.storage.sync.get({ pageagent_bridge: PAGEAGENT_BRIDGE_DEFAULT })
+    return (st.pageagent_bridge || PAGEAGENT_BRIDGE_DEFAULT).replace(/\/$/, '')
+  } catch {
+    return PAGEAGENT_BRIDGE_DEFAULT
+  }
+}
+
+async function ensurePageAgentBridge(handler, opts = {}) {
+  const base = (opts.base ?? (await getBridgeBase())).replace(/\/$/, '')
   const client = new PageAgentBridgeClient(base, handler)
   client.start()
   return client
 }
+
+export { ensurePageAgentBridge, getBridgeBase }
 
 class PageAgentBridgeClient {
   constructor(base, handler) {
@@ -89,4 +98,9 @@ class PageAgentBridgeClient {
     })()
   }
   close() { this.closed = true }
+  async reconnect(base) {
+    this.base = (base || PAGEAGENT_BRIDGE_DEFAULT).replace(/\/$/, '')
+    this.closed = false
+    this._startLoop()
+  }
 }

@@ -320,6 +320,36 @@ function fillZhihuContent(title, markdown, cover, topics) {
     // 等待内容渲染
     await new Promise(resolve => setTimeout(resolve, 300))
 
+    // quantclaw 多图加固：数编辑器 img，对不上 markdown 图数则等（60s），仍缺则在缺位重插一次
+    const mdImgs = [...markdown.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)].map(m => m[1])
+    let imgRes = null
+    if (mdImgs.length) {
+      const editorImgs = () => Array.from(
+        document.querySelectorAll('.public-DraftEditor-content img, [contenteditable="true"][role="textbox"] img'))
+      const t0 = Date.now()
+      while (Date.now() - t0 < 60000) {
+        if (editorImgs().length >= mdImgs.length) break
+        await new Promise(r => setTimeout(r, 1500))
+      }
+      const got = editorImgs().map(im => im.src ?? '')
+      const missing = mdImgs.filter(u => !got.some(s => s.includes(u.slice(-24)) || u.includes((s ?? '').slice(-24))))
+      imgRes = { expect: mdImgs.length, got: got.length, missing: missing.length }
+      // 缺图重插：在编辑器末尾另起一段插入缺的图（知乎重拉），小红书多图同法复用
+      if (missing.length) {
+        try {
+          document.execCommand('selectAll', false, null)
+          const sel = getSelection()
+          sel?.collapseToEnd()
+          for (const u of missing) {
+            document.execCommand('insertParagraph', false, null)
+            document.execCommand('insertText', false, `![](${u})`)
+          }
+          await new Promise(r => setTimeout(r, 5000))
+          imgRes.regot = editorImgs().length
+        } catch (e) { imgRes.reinsertErr = String(e?.message ?? e) }
+      }
+    }
+
     // quantclaw: 封面 + 话题（cover 单 URL，topics 最多 3 个；失败只记 detail 不抛错）
     let coverRes = null, topicRes = null
     if (cover) {
@@ -331,7 +361,7 @@ function fillZhihuContent(title, markdown, cover, topics) {
       catch (e) { topicRes = { done: 0, err: String(e?.message ?? e) } }
     }
 
-    return { success: true, method: 'paste-markdown', cover: coverRes, topics: topicRes }
+    return { success: true, method: 'paste-markdown', cover: coverRes, topics: topicRes, images: imgRes }
   }
 
   return fillContent()
@@ -418,6 +448,7 @@ async function syncZhihuContent(tab, content, helpers) {
         body: JSON.stringify({ step: '[pageagent] zhihu-done', detail: JSON.stringify({
           cover: fillResult?.cover ?? null,
           topics: fillResult?.topics ?? null,
+          images: fillResult?.images ?? null,
         }).slice(0, 800) }),
       })
     } catch {}
