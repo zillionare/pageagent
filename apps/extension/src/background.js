@@ -2,6 +2,7 @@
 import { PLATFORMS, LOGIN_CHECK_CONFIG, SYNC_HANDLERS } from '@cose/core/src/platforms/index.js'
 import { qianfanIntercept } from '@cose/core/src/platforms/qianfan.js'
 import { convertAvatarToBase64 } from '@cose/detection/src/utils.js'
+import { ensurePageAgentBridge } from './bridge-client.js'
 // [DISABLED] import { fillAlipayOpenContent } from '@cose/core/src/platforms/alipayopen.js'
 
 // ===== Offscreen helper =====
@@ -4047,3 +4048,100 @@ chrome.runtime.onInstalled.addListener(() => {
 try {
   console.log(`[PageAgent v${chrome.runtime.getManifest().version}] SW 启动`)
 } catch {}
+
+// ===== PageAgent 桥（quantclaw）：连 CF :8787，供后台 crawl/抓取任务 =====
+let pageAgentBridge = null
+try {
+  ensurePageAgentBridge(handleBridgeRequest).then((c) => {
+    pageAgentBridge = c
+    console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥客户端就绪`)
+  }).catch((e) => {
+    console.log('[PageAgent] 桥初始化失败', e?.message ?? e)
+  })
+} catch (e) {
+  console.log('[PageAgent] 桥初始化异常', e?.message ?? e)
+}
+
+async function handleBridgeRequest(method, params) {
+  if (method === 'version') {
+    return {
+      version: 'pageagent-' + chrome.runtime.getManifest().version,
+      hasPageAgent: true,
+      build: chrome.runtime.getManifest().version,
+    }
+  }
+  if (method === 'crawl_article') {
+    return await bridgeCrawlArticle(params ?? {})
+  }
+  throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
+}
+
+// 抓取当前 tab（或指定 URL 新开 tab）正文，转 markdown 回传
+async function bridgeCrawlArticle(params) {
+  const url = String(params.url ?? '').trim()
+  let tabId = params.tabId ?? null
+  let created = false
+  if (url) {
+    const t = await chrome.tabs.create({ url, active: false })
+    if (!t?.id) throw Object.assign(new Error('无法打开页面'), { code: -32002 })
+    tabId = t.id
+    created = true
+    const t0 = Date.now()
+    for (;;) {
+      const cur = await chrome.tabs.get(tabId).catch(() => null)
+      if (!cur || cur.status === 'complete') break
+      if (Date.now() - t0 > 45000) break
+      await new Promise(r => setTimeout(r, 800))
+    }
+    await new Promise(r => setTimeout(r, 2000))
+  } else {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true })
+    tabId = tabs[0]?.id ?? null
+  }
+  if (!tabId) throw Object.assign(new Error('没有可用标签页'), { code: -32002 })
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        // Readability 风格抽取：找最大文本块容器
+        const pick = () => {
+          const cands = Array.from(document.querySelectorAll('article, main, [role="main"], .content, .post, .article'))
+          if (cands.length) {
+            cands.sort((a, b) => (b.textContent?.length ?? 0) - (a.textContent?.length ?? 0))
+            return cands[0]
+          }
+          return document.body
+        }
+        const root = pick()
+        // 粗转 markdown：h1-h3/p/li/img/a/code
+        const lines = []
+        const walk = (el) => {
+          for (const n of el.childNodes) {
+            if (n.nodeType === 3) {
+              const t = (n.textContent ?? '').replace(/\s+/g, ' ').trim()
+              if (t) lines.push(t)
+            } else if (n.nodeType !== 1) continue
+            const tag = n.tagName.toLowerCase()
+            if (/^(script|style|nav|header|footer|aside|form|button)$/.test(tag)) continue
+            if (/^h([1-3])$/.test(tag)) lines.push('#'.repeat(Number(tag[1])) + ' ' + (n.textContent ?? '').trim())
+            else if (tag === 'li') lines.push('- ' + (n.textContent ?? '').trim())
+            else if (tag === 'img' && n.src) lines.push(`![](${n.src})`)
+            else if (tag === 'a' && n.href) lines.push(`[${(n.textContent ?? '').trim()}](${n.href})`)
+            else if (tag === 'pre') lines.push('```\n' + (n.textContent ?? '').trim() + '\n```')
+            else walk(n)
+          }
+        }
+        walk(root)
+        return {
+          title: document.title,
+          url: location.href,
+          markdown: lines.filter(Boolean).join('\n\n'),
+        }
+      },
+      world: 'MAIN',
+    })
+    return { ...result, chars: result?.markdown?.length ?? 0 }
+  } finally {
+    if (created && tabId) { try { await chrome.tabs.remove(tabId) } catch {} }
+  }
+}
