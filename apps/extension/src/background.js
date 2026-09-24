@@ -945,7 +945,14 @@ async function syncToPlatform(platformId, content) {
                 importBtn.click()
                 await new Promise(r => setTimeout(r, 1500))
                 // 导入对话框：找 textarea/codeMirror 或粘贴区，塞 markdown 后点确认/导入
-                const dlg = document.querySelector('[role="dialog"], .d-modal, .d-drawer, .d-popover, [class*="modal" i], [class*="dialog" i], [class*="drawer" i], [class*="popover" i]')
+                // quantclaw诊断：枚举所有候选浮层，找含 textarea/contenteditable 的
+                const cands = Array.from(document.querySelectorAll(
+                  '[role="dialog"], .d-modal, .d-drawer, [class*="modal" i], [class*="dialog" i], [class*="drawer" i], [class*="overlay" i], [class*="popup" i], .d-popup'))
+                  .filter(el => el.getBoundingClientRect().width > 100 && el.getBoundingClientRect().height > 100)
+                importRes.candCount = cands.length
+                importRes.candCls = cands.map(el => (el.className ?? '').toString().slice(0, 60))
+                const dlg = cands.find(el => el.querySelector('textarea, [contenteditable="true"], .CodeMirror, input[type="file"]'))
+                  ?? cands[cands.length - 1] ?? null
                 if (!dlg) {
                   importRes.dlgMiss = true
                   importRes.bodySample = document.body.innerHTML.slice(-500)
