@@ -4041,5 +4041,9 @@ function waitForTab(tabId, timeout = 60000) {
 
 // 安装时初始化
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('MD 文章同步助手已安装')
+  console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 已安装`)
 })
+// SW 启动即报版本（quantclaw：部署确认用，看 chrome://extensions 的 Service Worker 日志）
+try {
+  console.log(`[PageAgent v${chrome.runtime.getManifest().version}] SW 启动`)
+} catch {}
