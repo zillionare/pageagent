@@ -522,43 +522,61 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
   }
 }
 
-// 微信公众号「原文链接」：点击入口 → 弹窗填 URL → 确认 → 验证
+// 微信公众号「原文链接」：点击入口 → 等弹窗(6s) → 填 URL → 点确认 → 验证状态变化
 function wechatSetSourceUrl(blogUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
     const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-    const realDialogs = () => Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+    const dlgCands = () => Array.from(document.querySelectorAll(
+      '.weui-desktop-dialog, .weui-desktop-dialog_wrp, [role="dialog"], [class*="dialog" i], [class*="popup" i]'
+    )).filter(vis)
+    const findDlgInput = () => {
+      for (const d of dlgCands()) {
+        const ins = Array.from(d.querySelectorAll('input, textarea'))
+          .filter(i => !['checkbox', 'radio', 'file', 'hidden', 'submit', 'button'].includes(i.type || 'text'))
+        if (ins.length) {
+          const byName = ins.find(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
+          return { dlg: d, inp: byName || ins[0] }
+        }
+      }
+      return null
+    }
     const dbg = {}
     try {
       const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
       if (!area) return { ok: false, err: 'no-url-area' }
       try { area.scrollIntoView({ block: 'center' }) } catch {}
       await sleep(300)
-      const descOf = () => {
-        const el = document.querySelector('#js_article_url_area .lbl_content_desc_url, #js_article_url_area .lbl_content_desc_default')
-        return el ? (el.textContent || '').trim().slice(0, 30) : null
+      const descState = () => {
+        const u = area.querySelector('.lbl_content_desc_url')
+        const d = area.querySelector('.lbl_content_desc_default')
+        return {
+          url: u ? (u.textContent || '').trim().slice(0, 60) : null, urlVis: u ? vis(u) : false,
+          def: d ? (d.textContent || '').trim().slice(0, 20) : null, defVis: d ? vis(d) : false,
+        }
       }
-      dbg.before = descOf()
-      // 点入口唤出设置弹窗（allow_click 区域优先）
+      dbg.before = descState()
+      // 点入口唤出设置弹窗
       const clickable = area.querySelector('.js_article_url_allow_click') || area.querySelector('label') || area
       clickable.click()
-      await sleep(1300)
-      let dlg = realDialogs().find(d => d.querySelector('input:not([type="checkbox"]):not([type="radio"]), textarea'))
-      dbg.dialogCls = dlg ? String(dlg.className).slice(0, 60) : null
-      let inp = null
-      if (dlg) {
-        inp = dlg.querySelector('input.js_url, input[name="source_url"], input[type="text"], input:not([type])')
-      } else {
-        const cb = area.querySelector('input[name="source_url_checked"]')
-        if (cb && !cb.checked) { cb.click(); await sleep(800) }
-        inp = document.querySelector('input[name="source_url"], input.js_url')
+      // 等弹窗输入框（最多 6s）
+      let found = null
+      const t0 = Date.now()
+      while (Date.now() - t0 < 6000) {
+        found = findDlgInput()
+        if (found) break
+        await sleep(400)
       }
-      dbg.inputFound = !!inp
-      if (!inp) {
-        dbg.dialogs = realDialogs().slice(0, 3).map(d => ({ cls: String(d.className).slice(0, 50), text: (d.textContent || '').trim().slice(0, 60), html: d.innerHTML.slice(0, 500) }))
-        dbg.areaHtml = area.outerHTML.slice(0, 600)
-        return { ok: false, err: 'no-url-input', dbg }
+      dbg.dlgCls = found ? String(found.dlg.className).slice(0, 70) : null
+      if (!found) {
+        dbg.dialogs = dlgCands().slice(0, 4).map(d => ({ cls: String(d.className).slice(0, 60), text: (d.textContent || '').trim().slice(0, 50), html: d.innerHTML.slice(0, 500) }))
+        dbg.allInputs = Array.from(document.querySelectorAll('input')).slice(0, 25).map(i => ({ type: i.type, name: i.name, cls: String(i.className).slice(0, 40), vis: vis(i), val: String(i.value || '').slice(0, 24) }))
+        // 关掉可能打开的弹窗，别留给用户
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        return { ok: false, err: 'no-dialog-input', dbg }
       }
+      const dlg = found.dlg
+      const inp = found.inp
       inp.focus()
       const proto = inp.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
       const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set
@@ -567,28 +585,28 @@ function wechatSetSourceUrl(blogUrl) {
       inp.dispatchEvent(new Event('change', { bubbles: true }))
       dbg.value = String(inp.value || '').slice(0, 60)
       await sleep(400)
-      if (dlg) {
-        const findOk = () => {
-          const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') || dlg.querySelector('.weui-desktop-btn_primary')
-          if (prim && vis(prim) && !prim.disabled) return prim
-          return Array.from(dlg.querySelectorAll('button')).filter(vis).find(b => /确定|确认|完成|保存/.test((b.textContent || '').trim()) && !b.disabled)
-        }
-        let okBtn = null
-        const t0 = Date.now()
-        while (Date.now() - t0 < 6000) { okBtn = findOk(); if (okBtn) break; await sleep(400) }
-        if (!okBtn) {
-          dbg.dialogButtons = Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 8)
-          return { ok: false, err: 'no-dialog-confirm', dbg }
-        }
-        okBtn.click()
-        await sleep(1300)
-      } else {
-        inp.dispatchEvent(new Event('blur', { bubbles: true }))
-        await sleep(800)
+      // 点弹窗确认（等可用）
+      const findOk = () => {
+        const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') || dlg.querySelector('.weui-desktop-btn_primary')
+        if (prim && vis(prim) && !prim.disabled) return prim
+        return Array.from(dlg.querySelectorAll('button')).filter(vis)
+          .find(b => /确定|确认|完成|保存/.test((b.textContent || '').trim()) && !b.disabled)
       }
-      dbg.after = descOf()
-      const openDlg = realDialogs().some(d => d.querySelector('input.js_url, input[name="source_url"], input[type="text"]'))
-      return { ok: dbg.after !== dbg.before || !openDlg, dbg }
+      let okBtn = null
+      const t1 = Date.now()
+      while (Date.now() - t1 < 5000) { okBtn = findOk(); if (okBtn) break; await sleep(400) }
+      if (!okBtn) {
+        dbg.dialogButtons = Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 8)
+        dbg.dlgHtml = dlg.innerHTML.slice(0, 600)
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        return { ok: false, err: 'no-dialog-confirm', dbg }
+      }
+      okBtn.click()
+      dbg.confirmClicked = true
+      await sleep(1600)
+      dbg.after = descState()
+      const changedOk = (dbg.after.urlVis && dbg.after.url) || (!dbg.after.defVis)
+      return { ok: !!changedOk, dbg }
     } catch (e) {
       return { ok: false, err: String(e && e.message || e), dbg }
     }
