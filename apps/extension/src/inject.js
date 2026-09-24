@@ -553,7 +553,9 @@
                 markdown: post.markdown,
                 thumb: post.thumb,
                 desc: post.desc,
-                // 微信公众号、百家号、网易号、Medium、少数派、B站专栏、微博头条和小红书使用剪贴板中带样式的 HTML
+                // 微信公众号等平台使用带内联样式的 HTML：
+                // 优先 marktwain 直算的 post.wechatHtml（自托管 http 页剪贴板读不到时的可靠路径），
+                // 兜底剪贴板里读到的 clipboardHtmlContent
                 wechatHtml:
                   platformId === 'wechat' ||
                   platformId === 'baijiahao' ||
@@ -563,7 +565,7 @@
                   platformId === 'bilibili' ||
                   platformId === 'weibo' ||
                   platformId === 'xiaohongshu'
-                    ? clipboardHtmlContent
+                    ? (post.wechatHtml || clipboardHtmlContent)
                     : null,
               },
             })
