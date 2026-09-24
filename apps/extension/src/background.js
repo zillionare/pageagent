@@ -928,104 +928,53 @@ async function syncToPlatform(platformId, content) {
               '.tiptap.ProseMirror[contenteditable="true"], [contenteditable="true"], .editor-content, .content-editor',
               5000
             )
-            // quantclaw: markdown 优先粘贴（text/plain，走编辑器 markdown 导入路径，图片自拉）；
-            // 无 markdown 才降级 HTML
+            // quantclaw: markdown 走导入按钮（工具栏最后 menu-item）→ 弹 .import-from-file-modal
+            // （点击/拖拽上传，无 file input）→ 模拟 drag&drop 丢 md 文件；导入覆盖已有内容，成功后不再粘贴
             const pasteBody = mdBody || ''
             const useMd = !!mdBody
-            // quantclaw: markdown 走导入按钮（工具栏最后一个 menu-item，导入符号图标）；
-            // 粘贴 markdown 不解析（已验证 gotImgs:0），必须点导入对话框
             const importRes = { tried: false, ok: false }
             if (useMd) {
               importRes.tried = true
               const menuItems = Array.from(document.querySelectorAll('.menu-items-container button.menu-item'))
                 .filter(el => el.getBoundingClientRect().width > 0)
-              // 导入按钮是最后一个（含导入符号 svg），按 path 数量/形状辅助确认
               const importBtn = menuItems[menuItems.length - 1] ?? null
               if (importBtn) {
                 importBtn.click()
                 await new Promise(r => setTimeout(r, 1500))
-                // 导入对话框：找 textarea/codeMirror 或粘贴区，塞 markdown 后点确认/导入
-                // quantclaw诊断：枚举所有候选浮层，找含 textarea/contenteditable 的
-                const cands = Array.from(document.querySelectorAll(
-                  '[role="dialog"], .d-modal, .d-drawer, [class*="modal" i], [class*="dialog" i], [class*="drawer" i], [class*="overlay" i], [class*="popup" i], .d-popup'))
-                  .filter(el => el.getBoundingClientRect().width > 100 && el.getBoundingClientRect().height > 100)
-                importRes.candCount = cands.length
-                importRes.candCls = cands.map(el => (el.className ?? '').toString().slice(0, 60))
-                const dlg = cands.find(el => el.querySelector('textarea, [contenteditable="true"], .CodeMirror, input[type="file"]'))
-                  ?? cands[cands.length - 1] ?? null
-                if (!dlg) {
-                  importRes.dlgMiss = true
-                  importRes.bodySample = document.body.innerHTML.slice(-500)
-                }
-                // .import-from-file-modal 是文件上传：markdown 写成 File 塞 input
-                // 先全页找 file input（可能在 modal 外/隐藏）；没有则点 upload-area 触发生成，再找
-                const allFileInputs = () => Array.from(document.querySelectorAll('input[type="file"]'))
-                  .map(el => ({ accept: el.accept, disabled: el.disabled, vis: el.getBoundingClientRect().width > 0,
-                    inModal: !!el.closest('.import-from-file-modal, .d-modal') }))
-                importRes.fileInputsBefore = allFileInputs()
-                let fileInput = dlg?.querySelector('input[type="file"]') ?? null
-                if (!fileInput) {
-                  const upArea = dlg?.querySelector('.upload-area, [class*="upload-area" i]')
+                const modal = document.querySelector('.import-from-file-modal')
+                if (modal) {
+                  const upArea = modal.querySelector('.upload-area') || modal.querySelector('.d-modal-content')
                   if (upArea) {
-                    try { upArea.click() } catch {}
-                    await new Promise(r => setTimeout(r, 800))
-                  }
-                  fileInput = dlg?.querySelector('input[type="file"]') ?? document.querySelector('input[type="file"]')
-                  importRes.fileInputsAfter = allFileInputs()
-                }
-                if (fileInput) {
-                  const mdFile = new File([pasteBody], 'article.md', { type: 'text/markdown' })
-                  const dt3 = new DataTransfer()
-                  dt3.items.add(mdFile)
-                  fileInput.files = dt3.files
-                  fileInput.dispatchEvent(new Event('change', { bubbles: true }))
-                  fileInput.dispatchEvent(new Event('input', { bubbles: true }))
-                  importRes.fileSent = true
-                  await new Promise(r => setTimeout(r, 3000))
-                  const okBtn2 = Array.from((dlg ?? document).querySelectorAll('button'))
-                    .find(b => /导入|确认|确定|完成|开始/.test((b.textContent ?? '').trim()) && b.getBoundingClientRect().width > 0)
-                  if (okBtn2) {
-                    okBtn2.click()
+                    const mdFile = new File([pasteBody], 'article.md', { type: 'text/markdown' })
+                    const dtDrop = new DataTransfer()
+                    dtDrop.items.add(mdFile)
+                    for (const type of ['dragenter', 'dragover', 'drop']) {
+                      upArea.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dtDrop }))
+                      await new Promise(r => setTimeout(r, 150))
+                    }
+                    importRes.dropped = true
+                    // 等导入完成：modal 关闭 / 编辑器有内容 / 超时 60s
+                    const t0 = Date.now()
+                    while (Date.now() - t0 < 60000) {
+                      const closed = !document.querySelector('.import-from-file-modal')
+                      const editorLen = contentEditor?.textContent?.length ?? 0
+                      if (closed || editorLen > 100) break
+                      await new Promise(r => setTimeout(r, 1500))
+                    }
+                    importRes.modalClosed = !document.querySelector('.import-from-file-modal')
+                    importRes.editorLen = contentEditor?.textContent?.length ?? 0
                     importRes.ok = true
-                    await new Promise(r => setTimeout(r, 5000))
-                  } else {
-                    importRes.ok = true
-                    await new Promise(r => setTimeout(r, 5000))
-                  }
+                  } else { importRes.err = 'no-upload-area' }
                 } else {
-                const area = dlg?.querySelector('textarea, [contenteditable="true"], .CodeMirror')
-                  ?? document.querySelector('[role="dialog"] textarea, .d-modal textarea')
-                if (area) {
-                  area.focus()
-                  if (area.tagName === 'TEXTAREA') {
-                    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
-                    if (setter) setter.call(area, pasteBody)
-                    else area.value = pasteBody
-                    area.dispatchEvent(new Event('input', { bubbles: true }))
-                  } else {
-                    area.textContent = pasteBody
-                    area.dispatchEvent(new Event('input', { bubbles: true }))
-                    const dt2 = new DataTransfer()
-                    dt2.setData('text/plain', pasteBody)
-                    area.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt2 }))
-                  }
-                  await new Promise(r => setTimeout(r, 800))
-                  const okBtn = Array.from((dlg ?? document).querySelectorAll('button'))
-                    .find(b => /导入|确认|确定|完成/.test((b.textContent ?? '').trim()) && b.getBoundingClientRect().width > 0)
-                  if (okBtn) {
-                    okBtn.click()
-                    importRes.ok = true
-                    await new Promise(r => setTimeout(r, 3000))
-                  } else { importRes.err = 'no-confirm-btn' }
-                } else {
-                  importRes.err = 'no-import-area'
-                  importRes.dlgHtml = (dlg?.innerHTML ?? '').slice(0, 600)
-                  importRes.dlgCls = dlg?.className ?? ''
-                }
+                  importRes.err = 'no-import-modal'
+                  const m = document.querySelector('.d-modal')
+                  importRes.dlgHtml = m ? m.outerHTML.slice(0, 300) : document.body.innerHTML.slice(-300)
                 }
               } else { importRes.err = 'no-import-btn' }
             }
-            if (contentEditor && (pasteBody || htmlBody)) {
+            // 导入成功则跳过文本粘贴；失败才降级粘贴
+            const mdImgCount = useMd ? [...pasteBody.matchAll(/!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/g)].length : 0
+            if (!importRes.ok && contentEditor && (pasteBody || htmlBody)) {
               contentEditor.focus()
 
               // 清空现有占位符内容
@@ -1054,30 +1003,25 @@ async function syncToPlatform(platformId, content) {
 
               contentEditor.dispatchEvent(pasteEvent)
               console.log('[COSE] 小红书内容已通过 paste 事件注入（' + (useMd ? 'markdown' : 'html') + '）')
-
-              // 等待内容渲染 + 图片自拉（markdown 图数对上才算完，最多 60s）
-              const mdImgCount = useMd ? [...pasteBody.matchAll(/!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/g)].length : 0
-              if (useMd && mdImgCount) {
-                const t0 = Date.now()
-                while (Date.now() - t0 < 60000) {
-                  const n = contentEditor.querySelectorAll('img').length
-                  if (n >= mdImgCount) break
-                  await new Promise(r => setTimeout(r, 1500))
-                }
-              } else {
-                await new Promise(r => setTimeout(r, 500))
-              }
-
-              // 验证内容是否注入成功
-              const wordCount = contentEditor.textContent?.length || 0
-              const imgCount = contentEditor.querySelectorAll('img').length
-              if (wordCount === 0 && !useMd) {
-                // 备用方案：直接设置 innerHTML（仅 HTML 路径）
+              await new Promise(r => setTimeout(r, 500 + (mdImgCount ? 0 : 0)))
+              const wordCount2 = (contentEditor.textContent?.length ?? 0)
+              if (wordCount2 === 0 && !useMd) {
                 console.log('[COSE] paste 事件未生效，尝试备用方案')
                 contentEditor.innerHTML = htmlBody
               }
-
-              return { success: true, method: useMd ? (importRes.ok ? 'import-dialog' : 'paste-markdown') : 'paste-html',
+            }
+            if (contentEditor && mdImgCount) {
+              // 图自拉：等 tiptap img 数对上（最多 60s）
+              const t1 = Date.now()
+              while (Date.now() - t1 < 60000) {
+                const n = contentEditor.querySelectorAll('img').length
+                if (n >= mdImgCount) break
+                await new Promise(r => setTimeout(r, 1500))
+              }
+            }
+            if (contentEditor) {
+              const imgCount = contentEditor.querySelectorAll('img').length
+              return { success: true, method: useMd ? (importRes.ok ? 'import-drag' : 'paste-markdown') : 'paste-html',
                 length: (pasteBody || htmlBody).length,
                 expectImgs: mdImgCount, gotImgs: imgCount, import: importRes }
             }
