@@ -958,7 +958,21 @@ async function syncToPlatform(platformId, content) {
                   importRes.bodySample = document.body.innerHTML.slice(-500)
                 }
                 // .import-from-file-modal 是文件上传：markdown 写成 File 塞 input
-                const fileInput = dlg?.querySelector('input[type="file"]') ?? null
+                // 先全页找 file input（可能在 modal 外/隐藏）；没有则点 upload-area 触发生成，再找
+                const allFileInputs = () => Array.from(document.querySelectorAll('input[type="file"]'))
+                  .map(el => ({ accept: el.accept, disabled: el.disabled, vis: el.getBoundingClientRect().width > 0,
+                    inModal: !!el.closest('.import-from-file-modal, .d-modal') }))
+                importRes.fileInputsBefore = allFileInputs()
+                let fileInput = dlg?.querySelector('input[type="file"]') ?? null
+                if (!fileInput) {
+                  const upArea = dlg?.querySelector('.upload-area, [class*="upload-area" i]')
+                  if (upArea) {
+                    try { upArea.click() } catch {}
+                    await new Promise(r => setTimeout(r, 800))
+                  }
+                  fileInput = dlg?.querySelector('input[type="file"]') ?? document.querySelector('input[type="file"]')
+                  importRes.fileInputsAfter = allFileInputs()
+                }
                 if (fileInput) {
                   const mdFile = new File([pasteBody], 'article.md', { type: 'text/markdown' })
                   const dt3 = new DataTransfer()
@@ -1089,7 +1103,7 @@ async function syncToPlatform(platformId, content) {
         const _bb = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787' })
         await fetch((_bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '') + '/log', {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ step: '[pageagent] xhs-done', detail: JSON.stringify(_fr).slice(0, 500) }),
+          body: JSON.stringify({ step: '[pageagent] xhs-done', detail: JSON.stringify(_fr).slice(0, 3000) }),
         })
       } catch {}
       return { success: true, message: '已同步到小红书' + _imgBits, tabId: tab.id }
