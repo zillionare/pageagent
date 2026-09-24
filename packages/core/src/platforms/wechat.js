@@ -556,13 +556,17 @@ function wechatSourceUrlPrep() {
     }
     if (!inp) return { ok: false, err: 'no-inline-input', steps }
     const r = inp.getBoundingClientRect()
-    const title = document.querySelector('#title')
-    const tr = title ? title.getBoundingClientRect() : null
+    // popover 的「确定」按钮（点别处会关掉 popover，必须点它）
+    let conf = null
+    for (const b of document.querySelectorAll('.popover_bar .jsPopoverBt')) {
+      if ((b.textContent || '').trim() === '确定') { conf = b; break }
+    }
+    const cr = conf ? conf.getBoundingClientRect() : null
     return {
       ok: true, steps,
       inputRect: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) },
+      confirmRect: cr ? { x: Math.round(cr.left + cr.width / 2), y: Math.round(cr.top + cr.height / 2) } : null,
       cbChecked: cb ? cb.checked : null,
-      blurRect: tr ? { x: Math.round(tr.left + 40), y: Math.round(tr.top + 12) } : { x: Math.round(r.left), y: Math.round(r.bottom + 30) },
     }
   })()
 }
@@ -611,39 +615,31 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
       await sleep(18)
     }
     await sleep(400)
-    // 3. 点标题区失焦（原生 blur/change → 他们的提交逻辑）
-    await click(prep.blurRect)
-    await sleep(1500)
-    let state = null
     const readState = async () => {
       const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func: wechatSourceUrlState, world: 'MAIN' })
       return result || {}
     }
-    state = await readState()
-    dbg.afterType = state
-    // 3b. 勾选框未勾则补点一次（保存草稿按表单序列化）
-    if (state && state.cbChecked === false) {
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          func: () => { const cb = document.querySelector('input[name="source_url_checked"]'); if (cb && !cb.checked) cb.click() },
-          world: 'MAIN',
-        })
-        await sleep(900)
-        state = await readState()
-        dbg.afterCheck = state
-      } catch {}
+    dbg.afterType = await readState()
+    // 3. 点 popover 里的「确定」提交（点别处会关闭 popover 导致丢失）
+    if (prep.confirmRect) {
+      await click(prep.confirmRect)
+      dbg.confirmClicked = true
+    } else {
+      dbg.confirmMiss = true
     }
-    // 4. 未提交则再试 Enter（真实回车）
-    if (!(state && (state.urlVis && state.url) || state.val === url && state.cbChecked)) {
-      await click(prep.inputRect)
-      await sleep(200)
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
-      await sleep(1200)
-      state = await readState()
-      dbg.afterEnter = state
-    }
+    await sleep(1500)
+    const state = await readState()
+    // 4. 采集校验错误文案（如有）
+    try {
+      const [{ result: errs }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => Array.from(document.querySelectorAll('.js_url_error, .js_url_ban_wording, .js_common_err, .js_url_tempkey, .js_warn'))
+          .filter(el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } })
+          .map(el => (el.textContent || '').trim().slice(0, 40)),
+        world: 'MAIN',
+      })
+      dbg.errMsgs = errs
+    } catch {}
     const ok = !!(state && ((state.urlVis && state.url) || state.val === url))
     return { ok, state, dbg }
   } finally {
