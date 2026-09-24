@@ -4211,6 +4211,7 @@ async function handleBridgeRequest(method, params) {
     return await bridgeWechatCoverProbe(params ?? {})
   }
   // quantclaw: xpress 多图发布移植（CF loop 任务调用）
+  if (method === 'probe_zhihu_ring') return await bridgeProbeZhihuRing(params ?? {})
   if (method === 'publish_content') return await dispatchXpress('publish_content', params ?? {})
   if (method === 'publish_ring_pin') return await dispatchZhihuPin('publish_ring_pin', params ?? {})
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
@@ -4508,6 +4509,42 @@ async function waitTabCompleteX(tabId, timeout = 45000) {
     if (Date.now() - t0 > timeout) break
     await new Promise(r => setTimeout(r, 800))
   }
+}
+
+// 探测知乎圈子页：发想法按钮候选/登录态/页面状态（quantclaw 诊断）
+async function bridgeProbeZhihuRing(params) {
+  const RING = 'https://www.zhihu.com/ring/host/1940469824917603882?tab=new'
+  let tabs = await chrome.tabs.query({ url: ['https://www.zhihu.com/*', 'https://*.zhihu.com/*'] })
+  tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
+  let target = tabs.find(t => /\/ring\//.test(t.url ?? '')) ?? null
+  if (!target?.id) {
+    target = await chrome.tabs.create({ url: RING, active: true })
+    await new Promise(r => setTimeout(r, 8000))
+  } else {
+    try { await chrome.tabs.update(target.id, { active: true }) } catch {}
+    await new Promise(r => setTimeout(r, 1500))
+  }
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: target.id },
+    func: () => {
+      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const out = { href: location.href, title: document.title, loggedIn: !/signin|login/i.test(location.href) }
+      const els = Array.from(document.querySelectorAll('button, div, a, span'))
+        .filter(el => (el.textContent || '').includes('发想法'))
+        .slice(0, 10)
+      out.candidates = els.map(el => {
+        const r = el.getBoundingClientRect()
+        return { tag: el.tagName, cls: String(el.className).slice(0, 90), text: (el.textContent || '').trim().slice(0, 24), vis: vis(el),
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } }
+      })
+      out.buttonsSample = Array.from(document.querySelectorAll('button')).filter(vis).slice(0, 25).map(b => (b.textContent || '').trim().slice(0, 14))
+      out.bodyLen = (document.body.textContent || '').length
+      out.hasEditor = !!document.querySelector('.public-DraftEditor-content, [contenteditable="true"]')
+      return out
+    },
+    world: 'MAIN',
+  })
+  return result ?? {}
 }
 
 // 小红书图文多图发布（payload: {title, content, images[], tags[], mode}）
