@@ -1,0 +1,91 @@
+{
+  "manifest_version": 3,
+  "name": "COSE - 多平台文章同步",
+  "description": "Create Once, Sync Everywhere. 一键将文章同步到多个平台",
+  "permissions": [
+    "tabGroups",
+    "activeTab",
+    "scripting",
+    "cookies",
+    "debugger",
+    "clipboardRead",
+    "storage",
+    "declarativeNetRequest",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://*.csdn.net/*",
+    "https://*.juejin.cn/*",
+    "https://*.jianshu.com/*",
+    "https://*.segmentfault.com/*",
+    "https://*.toutiao.com/*",
+    "https://*.douban.com/*",
+    "https://*.bilibili.com/*",
+    "https://*.weibo.com/*",
+    "https://*.sinaimg.cn/*",
+    "https://mp.weixin.qq.com/*",
+    "https://*.zhihu.com/*",
+    "https://*.sspai.com/*",
+    "https://cdnfile.sspai.com/*",
+    "https://*.xueqiu.com/*",
+    "https://*.eastmoney.com/*",
+    "https://*.wordpress.com/*",
+    "https://*.wordpress.org/*",
+    "https://md.doocs.org/*",
+    "https://*.cnblogs.com/*",
+    "https://*.oschina.net/*",
+    "https://*.51cto.com/*",
+    "https://*.infoq.cn/*",
+    "https://*.baijiahao.baidu.com/*",
+    "https://*.163.com/*",
+    "https://*.cloud.tencent.com/*",
+    "https://*.medium.com/*",
+    "https://*.sohu.com/*",
+    "https://*.aliyun.com/*",
+    "https://*.huaweicloud.com/*",
+    "https://*.huawei.com/*",
+    "https://*.hicloud.com/*",
+    "https://*.x.com/*",
+    "https://*.twitter.com/*",
+    "https://qianfan.cloud.baidu.com/*",
+    "https://*.alipay.com/*",
+    "https://*.modelscope.cn/*",
+    "https://*.alicdn.com/*",
+    "https://*.volcengine.com/*",
+    "https://*.byteacctimg.com/*",
+    "https://*.douyin.com/*",
+    "https://*.xiaohongshu.com/*",
+    "https://*.elecfans.com/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/cose_16.png",
+      "48": "icons/cose_48.png",
+      "128": "icons/cose_128.png"
+    },
+    "default_title": "COSE",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "bundles/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["bundles/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/cose_16.png",
+    "48": "icons/cose_48.png",
+    "128": "icons/cose_128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["bundles/inject.js", "bundles/platforms/*.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

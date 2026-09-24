@@ -1,0 +1,42 @@
+name: Platform Request / 平台支持
+description: Request support for a new platform / 请求支持新平台
+title: '[Platform]: '
+labels: ['enhancement', 'new platform']
+body:
+  - type: input
+    id: platform-name
+    attributes:
+      label: Platform Name / 平台名称
+      description: Name of the platform you want supported / 您希望支持的平台名称
+      placeholder: e.g., 简书、博客园 / e.g., Jianshu, cnblogs
+    validations:
+      required: true
+
+  - type: input
+    id: platform-url
+    attributes:
+      label: Platform URL / 平台网址
+      description: Main URL of the platform / 平台的主要网址
+      placeholder: e.g., https://www.jianshu.com
+    validations:
+      required: true
+
+  - type: textarea
+    id: reason
+    attributes:
+      label: Why this platform? / 为什么需要支持此平台？
+      description: Brief reason for supporting this platform / 简要说明支持此平台的原因
+      placeholder: e.g., Popular blogging platform in China / 如：国内热门博客平台
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: willingness
+    attributes:
+      label: Implementation / 实现意愿
+      description: Would you be willing to help implement this feature? / 您是否愿意帮助实现此功能？
+      options:
+        - label: I'm willing to submit a PR for this feature / 我愿意为此功能提交 PR
+          required: false
+        - label: I'd prefer to wait for community implementation / 我希望等待社区的实现
+          required: false

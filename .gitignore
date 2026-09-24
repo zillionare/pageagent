@@ -1,0 +1,12 @@
+# misc
+.DS_Store
+*.zip
+.vscode
+.idea
+.cursor
+.fleet
+.zed
+.windsurf
+.kiro
+dist/
+node_modules/
