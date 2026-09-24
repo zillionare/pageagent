@@ -945,7 +945,11 @@ async function syncToPlatform(platformId, content) {
                 importBtn.click()
                 await new Promise(r => setTimeout(r, 1500))
                 // 导入对话框：找 textarea/codeMirror 或粘贴区，塞 markdown 后点确认/导入
-                const dlg = document.querySelector('[role="dialog"], .d-modal, .d-drawer')
+                const dlg = document.querySelector('[role="dialog"], .d-modal, .d-drawer, .d-popover, [class*="modal" i], [class*="dialog" i], [class*="drawer" i], [class*="popover" i]')
+                if (!dlg) {
+                  importRes.dlgMiss = true
+                  importRes.bodySample = document.body.innerHTML.slice(-500)
+                }
                 const area = dlg?.querySelector('textarea, [contenteditable="true"], .CodeMirror')
                   ?? document.querySelector('[role="dialog"] textarea, .d-modal textarea')
                 if (area) {
@@ -970,7 +974,11 @@ async function syncToPlatform(platformId, content) {
                     importRes.ok = true
                     await new Promise(r => setTimeout(r, 3000))
                   } else { importRes.err = 'no-confirm-btn' }
-                } else { importRes.err = 'no-import-area' }
+                } else {
+                  importRes.err = 'no-import-area'
+                  importRes.dlgHtml = (dlg?.innerHTML ?? '').slice(0, 600)
+                  importRes.dlgCls = dlg?.className ?? ''
+                }
               } else { importRes.err = 'no-import-btn' }
             }
             if (contentEditor && (pasteBody || htmlBody)) {
