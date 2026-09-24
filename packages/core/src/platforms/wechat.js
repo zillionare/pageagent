@@ -601,6 +601,16 @@ function wechatSetSourceUrl(blogUrl) {
       inp.dispatchEvent(new Event('change', { bubbles: true }))
       dbg.value = String(inp.value || '').slice(0, 60)
       await sleep(400)
+      // 确保「原文链接」勾选框开启（保存草稿按表单序列化，未勾选则链接不生效）
+      let cbChecked = null
+      try {
+        const cb = document.querySelector('#js_article_url_area input[name="source_url_checked"]')
+        if (cb) {
+          if (!cb.checked) { cb.click(); await sleep(500) }
+          cbChecked = cb.checked
+        }
+      } catch {}
+      dbg.cbChecked = cbChecked
       if (dlg) {
         const findOk = () => {
           const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') || dlg.querySelector('.weui-desktop-btn_primary')
@@ -627,6 +637,7 @@ function wechatSetSourceUrl(blogUrl) {
       await sleep(1600)
       dbg.after = descState()
       const changedOk = (dbg.after.urlVis && dbg.after.url) || (!dbg.after.defVis)
+        || (dbg.cbChecked === true && dbg.value === blogUrl)
       return { ok: !!changedOk, dbg }
     } catch (e) {
       return { ok: false, err: String(e && e.message || e), dbg }
