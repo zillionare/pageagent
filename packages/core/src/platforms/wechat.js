@@ -355,6 +355,157 @@ function wechatSetCoverByDrop(coverUrl) {
   })()
 }
 
+// 裁剪框确认（页面主世界）：等 .weui-desktop-dialog 出现 → 点主按钮「确认」
+function clickWechatCropConfirm() {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const realDialog = () => {
+      const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+      return hit.length ? hit[hit.length - 1] : null
+    }
+    const t0 = Date.now()
+    let dlg = null
+    while (Date.now() - t0 < 10000) {
+      dlg = realDialog()
+      if (dlg) break
+      await sleep(400)
+    }
+    if (!dlg) return { ok: false, err: 'no-crop-dialog' }
+    const findOk = () => {
+      const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary')
+        || dlg.querySelector('.weui-desktop-btn_primary')
+      if (prim && vis(prim) && !prim.disabled) return prim
+      return Array.from(dlg.querySelectorAll('button')).filter(vis)
+        .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && !b.disabled)
+    }
+    let okBtn = null
+    const t1 = Date.now()
+    while (Date.now() - t1 < 8000) {
+      okBtn = findOk()
+      if (okBtn) break
+      await sleep(400)
+    }
+    if (!okBtn) return { ok: false, err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 10) }
+    okBtn.click()
+    return { ok: true, clicked: (okBtn.textContent || '').trim().slice(0, 8) }
+  })()
+}
+
+// 设文件后如果没弹窗，补发 change（有的实现不自动派发）
+function nudgeWechatCoverInput() {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const realDialog = () => Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis).length > 0
+    await sleep(900)
+    if (realDialog()) return { dialog: true }
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+    const inp = inputs.filter(i => /bmp/i.test(i.accept || '')).pop() || inputs[inputs.length - 1]
+    if (!inp) return { dialog: false, err: 'no-input' }
+    inp.dispatchEvent(new Event('change', { bubbles: true }))
+    inp.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(1600)
+    return { dialog: realDialog(), nudged: true }
+  })()
+}
+
+// 等封面预览生效（页面主世界）
+function waitWechatCoverPreview() {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const t0 = Date.now()
+    while (Date.now() - t0 < 30000) {
+      const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
+      if (prev && vis(prev)) {
+        const bg = (prev.style && prev.style.backgroundImage) || ''
+        if (/url\(/.test(bg) && !/url\(["']{2}\)/.test(bg) && !/url\(\)/.test(bg)) return { ok: true, via: 'preview-bg' }
+        const img = prev.querySelector('img')
+        if (img && img.src) return { ok: true, via: 'preview-img' }
+      }
+      await sleep(800)
+    }
+    return { ok: false, err: 'cover-preview-timeout' }
+  })()
+}
+
+// 封面（SW 侧）：下载封面→CDP 真实点击封面区→拦文件选择器→设文件→裁剪确认→等生效
+async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const dbg = {}
+  // 1. 下载封面到磁盘
+  const extM = String(coverUrl).match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)
+  const filename = `cf-cover-${Date.now()}.${(extM && extM[1] || 'jpg').toLowerCase()}`
+  const dlId = await chrome.downloads.download({ url: coverUrl, filename, saveAs: false })
+  let absPath = null
+  const t0 = Date.now()
+  for (;;) {
+    const [it] = await chrome.downloads.search({ id: dlId })
+    if (it && it.state === 'complete' && it.filename) { absPath = it.filename; break }
+    if (it && (it.state === 'interrupted' || it.error)) throw new Error('下载失败: ' + (it.error || it.state))
+    if (Date.now() - t0 > 25000) throw new Error('下载超时')
+    await sleep(400)
+  }
+  dbg.path = String(absPath).slice(-40)
+  // 2. attach debugger + 拦 chooser
+  await chrome.debugger.attach({ tabId }, '1.3')
+  const onEvent = (source, method, params) => {
+    if (source.tabId === tabId && method === 'Page.fileChooserOpened') dbg.chooser = params
+  }
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'DOM.enable')
+    await chrome.debugger.sendCommand({ tabId }, 'Page.enable')
+    await chrome.debugger.sendCommand({ tabId }, 'Page.setInterceptFileChooserDialog', { enabled: true })
+    // 3. 封面区坐标 + CDP 真实点击（带用户激活）
+    const [{ result: pt }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const el = document.querySelector('.js_cover_btn_area') || document.querySelector('#js_cover_area') || document.querySelector('.select-cover__btn')
+        if (!el) return null
+        try { el.scrollIntoView({ block: 'center' }) } catch {}
+        const r = el.getBoundingClientRect()
+        return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height) }
+      },
+      world: 'MAIN',
+    })
+    if (!pt) throw new Error('未找到封面区')
+    dbg.pt = pt
+    chrome.debugger.onEvent.addListener(onEvent)
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type, x: pt.x, y: pt.y, button: 'left', clickCount: 1 })
+      await sleep(90)
+    }
+    const t1 = Date.now()
+    while (Date.now() - t1 < 8000 && !dbg.chooser) await sleep(200)
+    if (!dbg.chooser) {
+      dbg.afterClickInputs = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => Array.from(document.querySelectorAll('input[type="file"]')).map(i => String(i.accept || '').slice(0, 50)),
+        world: 'MAIN',
+      }).then(r => r[0].result)
+      return { ok: false, err: 'no-file-chooser', dbg }
+    }
+    await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', { files: [absPath], backendNodeId: dbg.chooser.backendNodeId })
+    await sleep(1200)
+    try {
+      const [{ result: nudge }] = await chrome.scripting.executeScript({ target: { tabId }, func: nudgeWechatCoverInput, world: 'MAIN' })
+      dbg.nudge = nudge
+    } catch {}
+    await sleep(1200)
+    // 4. 裁剪确认
+    const [{ result: crop }] = await chrome.scripting.executeScript({ target: { tabId }, func: clickWechatCropConfirm, world: 'MAIN' })
+    dbg.crop = crop
+    await sleep(2500)
+    // 5. 等封面预览
+    const [{ result: prev }] = await chrome.scripting.executeScript({ target: { tabId }, func: waitWechatCoverPreview, world: 'MAIN' })
+    return { ok: !!(prev && prev.ok), crop, preview: prev, dbg }
+  } finally {
+    try { chrome.debugger.onEvent.removeListener(onEvent) } catch {}
+    try { await chrome.debugger.detach({ tabId }) } catch {}
+  }
+}
+
 // 微信公众号「原文链接」字段（正文禁外链，唯一出路）
 function wechatSetSourceUrl(blogUrl) {
   return (async () => {
@@ -571,20 +722,14 @@ async function syncWechatContent(tab, content, helpers) {
   if (fillResult.coverDiag) wxBits.push(`封面入口:label${fillResult.coverDiag.labels}/input${fillResult.coverDiag.fileInputs}`)
   var wxSuffix = wxBits.length ? `（${wxBits.join('，')}）` : ''
 
-  // 步骤5b：封面（frontmatter thumb → 封面区拖拽）
+  // 步骤5b：封面（frontmatter thumb → CDP 拦文件选择器上传）
   let coverRes = null
   if (content.thumb) {
     try {
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: wechatSetCoverByDrop,
-        args: [content.thumb],
-        world: 'MAIN',
-      })
-      coverRes = result
+      coverRes = await setWechatCoverViaCDP(tab.id, content.thumb, chrome)
     } catch (e) { coverRes = { ok: false, err: String(e?.message ?? e) } }
     console.log('[COSE] 微信封面结果:', JSON.stringify(coverRes))
-    await new Promise(resolve => setTimeout(resolve, 2000))
+    await new Promise(resolve => setTimeout(resolve, 1500))
   }
 
   // 步骤5c：原文链接字段（公众号正文禁外链）
