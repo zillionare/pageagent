@@ -522,7 +522,7 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
   }
 }
 
-// 微信公众号「原文链接」：点击入口 → 等弹窗(6s) → 填 URL → 点确认 → 验证状态变化
+// 微信公众号「原文链接」v3：多目标逐个点（勾选框最可能开弹窗）→ 等弹窗/行内输入 → 填 → 确认 → 验证
 function wechatSetSourceUrl(blogUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -541,6 +541,10 @@ function wechatSetSourceUrl(blogUrl) {
       }
       return null
     }
+    const findInline = () => {
+      const cands = Array.from(document.querySelectorAll('input[name="source_url"], input.js_url, textarea.js_url'))
+      return cands.find(i => vis(i)) || null
+    }
     const dbg = {}
     try {
       const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
@@ -556,24 +560,36 @@ function wechatSetSourceUrl(blogUrl) {
         }
       }
       dbg.before = descState()
-      // 点入口唤出设置弹窗
-      const clickable = area.querySelector('.js_article_url_allow_click') || area.querySelector('label') || area
-      clickable.click()
-      // 等弹窗输入框（最多 6s）
+      // 多目标逐个点，直到弹窗或行内输入出现
+      const targets = [
+        ['allow_click', area.querySelector('.js_article_url_allow_click')],
+        ['label', area.querySelector('label.frm_checkbox_label') || area.querySelector('label')],
+        ['checkbox', area.querySelector('input[name="source_url_checked"]')],
+        ['lbl', area.querySelector('.lbl_content')],
+      ].filter(x => x[1])
       let found = null
-      const t0 = Date.now()
-      while (Date.now() - t0 < 6000) {
-        found = findDlgInput()
+      const tried = []
+      for (const [name, el] of targets) {
+        try { el.click() } catch {}
+        const t = Date.now()
+        while (Date.now() - t < 2500) {
+          found = findDlgInput()
+          if (found) break
+          const inline = findInline()
+          if (inline) { found = { dlg: null, inp: inline, inline: true }; break }
+          await sleep(300)
+        }
+        tried.push({ name, hit: !!found })
         if (found) break
-        await sleep(400)
       }
-      dbg.dlgCls = found ? String(found.dlg.className).slice(0, 70) : null
+      dbg.tried = tried
+      dbg.dlgCls = found && found.dlg ? String(found.dlg.className).slice(0, 70) : (found ? 'inline' : null)
       if (!found) {
-        dbg.dialogs = dlgCands().slice(0, 4).map(d => ({ cls: String(d.className).slice(0, 60), text: (d.textContent || '').trim().slice(0, 50), html: d.innerHTML.slice(0, 500) }))
-        dbg.allInputs = Array.from(document.querySelectorAll('input')).slice(0, 25).map(i => ({ type: i.type, name: i.name, cls: String(i.className).slice(0, 40), vis: vis(i), val: String(i.value || '').slice(0, 24) }))
-        // 关掉可能打开的弹窗，别留给用户
+        dbg.dialogs = dlgCands().slice(0, 4).map(d => ({ cls: String(d.className).slice(0, 60), text: (d.textContent || '').trim().slice(0, 50), html: d.innerHTML.slice(0, 700) }))
+        dbg.areaHtml = area.outerHTML.slice(0, 900)
+        dbg.urlInputs = Array.from(document.querySelectorAll('input[name="source_url"], input.js_url')).map(i => ({ vis: vis(i), val: String(i.value || '').slice(0, 30), parentVis: i.parentElement ? vis(i.parentElement) : null }))
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-        return { ok: false, err: 'no-dialog-input', dbg }
+        return { ok: false, err: 'no-input-after-clicks', dbg }
       }
       const dlg = found.dlg
       const inp = found.inp
@@ -585,24 +601,29 @@ function wechatSetSourceUrl(blogUrl) {
       inp.dispatchEvent(new Event('change', { bubbles: true }))
       dbg.value = String(inp.value || '').slice(0, 60)
       await sleep(400)
-      // 点弹窗确认（等可用）
-      const findOk = () => {
-        const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') || dlg.querySelector('.weui-desktop-btn_primary')
-        if (prim && vis(prim) && !prim.disabled) return prim
-        return Array.from(dlg.querySelectorAll('button')).filter(vis)
-          .find(b => /确定|确认|完成|保存/.test((b.textContent || '').trim()) && !b.disabled)
+      if (dlg) {
+        const findOk = () => {
+          const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') || dlg.querySelector('.weui-desktop-btn_primary')
+          if (prim && vis(prim) && !prim.disabled) return prim
+          return Array.from(dlg.querySelectorAll('button')).filter(vis)
+            .find(b => /确定|确认|完成|保存/.test((b.textContent || '').trim()) && !b.disabled)
+        }
+        let okBtn = null
+        const t1 = Date.now()
+        while (Date.now() - t1 < 5000) { okBtn = findOk(); if (okBtn) break; await sleep(400) }
+        if (!okBtn) {
+          dbg.dialogButtons = Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 8)
+          dbg.dlgHtml = dlg.innerHTML.slice(0, 800)
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+          return { ok: false, err: 'no-dialog-confirm', dbg }
+        }
+        okBtn.click()
+        dbg.confirmClicked = true
+      } else {
+        // 行内输入：回车/失焦提交
+        try { inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) } catch {}
+        inp.dispatchEvent(new Event('blur', { bubbles: true }))
       }
-      let okBtn = null
-      const t1 = Date.now()
-      while (Date.now() - t1 < 5000) { okBtn = findOk(); if (okBtn) break; await sleep(400) }
-      if (!okBtn) {
-        dbg.dialogButtons = Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 8)
-        dbg.dlgHtml = dlg.innerHTML.slice(0, 600)
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-        return { ok: false, err: 'no-dialog-confirm', dbg }
-      }
-      okBtn.click()
-      dbg.confirmClicked = true
       await sleep(1600)
       dbg.after = descState()
       const changedOk = (dbg.after.urlVis && dbg.after.url) || (!dbg.after.defVis)
@@ -829,7 +850,7 @@ async function syncWechatContent(tab, content, helpers) {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ step: '[pageagent] wechat-done', detail: JSON.stringify({
         cover: coverRes, sourceUrl: srcRes, save: saveRes, wordCount: fillResult.wordCount, imageCount: fillResult.imageCount,
-      }).slice(0, 1200) }),
+      }).slice(0, 4000) }),
     })
   } catch {}
 

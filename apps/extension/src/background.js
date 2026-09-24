@@ -4198,6 +4198,7 @@ async function handleBridgeRequest(method, params) {
 async function bridgeWechatCoverProbe(params) {
   if (params.dropUrl) return await probeWechatCoverDrop(params)
   if (params.findText) return await probeWechatFindText(params)
+  if (params.clickSourceUrl) return await probeWechatSourceUrl(params)
   const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
@@ -4350,6 +4351,53 @@ async function probeWechatFindText(params) {
       return out
     },
     args: [String(params.findText)],
+    world: 'MAIN',
+  })
+  return result ?? {}
+}
+
+// 探测：点「原文链接」各入口，看每步出现什么弹窗/输入（quantclaw 诊断）
+async function probeWechatSourceUrl(params) {
+  const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
+  const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
+  if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
+  try { await chrome.tabs.update(editorTab.id, { active: true }) } catch {}
+  await new Promise(r => setTimeout(r, 800))
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: editorTab.id },
+    func: async () => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms))
+      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const snap = (label) => {
+        const dlgs = Array.from(document.querySelectorAll('.weui-desktop-dialog, .weui-desktop-dialog_wrp, [role="dialog"], [class*="dialog" i]')).filter(vis)
+        const urlIns = Array.from(document.querySelectorAll('input, textarea'))
+          .filter(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
+          .map(i => ({ type: i.type, name: i.name, cls: String(i.className).slice(0, 50), vis: vis(i), val: String(i.value || '').slice(0, 30) }))
+        return {
+          step: label,
+          dlgs: dlgs.slice(0, 4).map(d => ({ cls: String(d.className).slice(0, 70), text: (d.textContent || '').trim().slice(0, 60), html: d.innerHTML.slice(0, 700) })),
+          urlIns,
+        }
+      }
+      const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+      if (!area) return { err: 'no-url-area' }
+      try { area.scrollIntoView({ block: 'center' }) } catch {}
+      await sleep(400)
+      const out = { steps: [snap('before')] }
+      const seq = [
+        ['allow_click', area.querySelector('.js_article_url_allow_click')],
+        ['label', area.querySelector('label')],
+        ['checkbox', area.querySelector('input[name="source_url_checked"]')],
+      ]
+      for (const [name, el] of seq) {
+        if (!el) { out.steps.push({ step: name, skip: 'not-found' }); continue }
+        try { el.click() } catch {}
+        await sleep(2000)
+        out.steps.push(snap('after-' + name))
+      }
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      return out
+    },
     world: 'MAIN',
   })
   return result ?? {}
