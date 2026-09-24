@@ -20,22 +20,30 @@ function qcVisible(el) {
 }
 async function qcUploadArticleCover(coverUrl) {
   if (!coverUrl) return { done: 0, skipped: 'no-cover' }
+  const dbg = {}
   const label = Array.from(document.querySelectorAll('label'))
     .find(el => (el.textContent ?? '').includes('添加封面') && qcVisible(el))
+  dbg.labelFound = !!label
+  dbg.labelCount = Array.from(document.querySelectorAll('label')).filter(el => (el.textContent ?? '').includes('封面')).length
   if (label) {
     try { label.scrollIntoView({ block: 'center' }) } catch {}
     await new Promise(r => setTimeout(r, 300))
+    // 点 label 唤出 input（知乎封面 input 可能是点击后才挂载）
+    try { label.click() } catch {}
+    await new Promise(r => setTimeout(r, 800))
   }
   let input = label?.querySelector?.('input[type="file"]')
     || document.querySelector('label.UploadPicture-wrapper input[type="file"]')
   if (!input) {
     for (let i = 0; i < 8 && !input; i++) {
       const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(el => !el.disabled)
+      dbg.fileInputCount = inputs.length
       input = inputs.find(el => /image|jpg|jpeg|png/i.test(el.accept || '')) || inputs[inputs.length - 1]
       if (!input) await new Promise(r => setTimeout(r, 800))
     }
   }
-  if (!input) return { done: 0, err: 'no-cover-input' }
+  dbg.inputFound = !!input
+  if (!input) return { done: 0, err: 'no-cover-input', dbg }
   const before = document.querySelectorAll('.UploadPicture-wrapper img, [class*="cover" i] img').length
   try {
     const blob = await (await fetch(coverUrl)).blob()
@@ -47,14 +55,15 @@ async function qcUploadArticleCover(coverUrl) {
     input.dispatchEvent(new Event('change', { bubbles: true }))
     input.dispatchEvent(new Event('input', { bubbles: true }))
   }
-  catch (e) { return { done: 0, err: 'fetch-or-fill: ' + String(e?.message ?? e) } }
+  catch (e) { dbg.inputAccept = input.accept; return { done: 0, err: 'fetch-or-fill: ' + String(e?.message ?? e), dbg } }
+  dbg.filled = true
   const t0 = Date.now()
   while (Date.now() - t0 < 30000) {
     if (document.querySelectorAll('.UploadPicture-wrapper img, [class*="cover" i] img').length > before
       || /更换封面|重新上传|删除/.test(document.body.textContent ?? '')) return { done: 1 }
     await new Promise(r => setTimeout(r, 800))
   }
-  return { done: 0, err: 'cover-upload-timeout' }
+  return { done: 0, err: 'cover-upload-timeout', dbg }
 }
 async function qcAddArticleTopics(topics) {
   const list = (topics ?? []).map(t => String(t).replace(/^#+/, '').trim()).filter(Boolean).slice(0, 3)
@@ -389,7 +398,11 @@ async function syncZhihuContent(tab, content, helpers) {
       console.log('[COSE] 未检测到图片上传请求或超时，跳过刷新')
     }
 
-    return { success: true, message: '已打开知乎并同步内容', tabId: tab.id }
+    const bits = []
+    if (fillResult?.cover) bits.push(`封面:${fillResult.cover.done ? 'OK' : ('FAIL:' + (fillResult.cover.err ?? fillResult.cover.skipped ?? '?'))}`)
+    if (fillResult?.topics) bits.push(`话题:${fillResult.topics.done ?? 0}/3${fillResult.topics.err ? ':' + fillResult.topics.err : ''}`)
+    const suffix = bits.length ? `（${bits.join('，')}）` : ''
+    return { success: true, message: '已打开知乎并同步内容' + suffix, tabId: tab.id }
   } else {
     return { success: false, message: fillResult?.error || '内容同步失败', tabId: tab.id }
   }

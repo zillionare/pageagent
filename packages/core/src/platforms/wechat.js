@@ -49,7 +49,7 @@ function pickWechatBodyProseMirrorCandidate(nodes, { titleInput, titleEditor } =
 
 // 微信公众号内容填充函数（在页面主世界中执行）
 // 注意：需要先调用 injectUtils 注入 window.waitFor
-async function fillWechatContent(title, htmlBody) {
+async function fillWechatContent(title, htmlBody, desc, thumb) {
   /**
    * 后台改版后可能存在多个 `.ProseMirror`（标题区也可能是 ProseMirror），
    * `querySelector('.ProseMirror')` 常会命中标题编辑器，导致正文 HTML 被贴进标题。
@@ -222,12 +222,34 @@ async function fillWechatContent(title, htmlBody) {
       const imageCount = editor.querySelectorAll?.('img').length || 0
       const hasEditorContent = wordCount > 0 || imageCount > 0 || injected
 
+      // quantclaw: 摘要 + 封面入口诊断
+      let descFilled = false
+      if (desc) {
+        const descBox = document.querySelector('textarea.js_desc, textarea[placeholder*="摘要"], textarea[placeholder*="选填"]')
+        if (descBox) {
+          descBox.focus()
+          const proto = window.HTMLTextAreaElement.prototype
+          Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(descBox, desc)
+          descBox.dispatchEvent(new Event('input', { bubbles: true }))
+          descBox.dispatchEvent(new Event('change', { bubbles: true }))
+          descFilled = true
+        }
+      }
+      // 封面：找入口（只诊断+回传，不自动上传；上传需素材库两步，下一版）
+      const coverDiag = {
+        labels: Array.from(document.querySelectorAll('label')).filter(el => (el.textContent ?? '').includes('封面')).length,
+        fileInputs: Array.from(document.querySelectorAll('input[type="file"]')).length,
+        hasThumb: !!thumb,
+      }
+
       return {
         success: hasEditorContent,
         error: hasEditorContent ? undefined : injectError || '正文注入后未检测到有效内容',
         wordCount,
         imageCount,
         titleFilled: titleInput?.value === title || titleEditor?.textContent?.trim() === title,
+        descFilled,
+        coverDiag,
       }
     }
 
@@ -376,7 +398,7 @@ async function syncWechatContent(tab, content, helpers) {
     result = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: fillWechatContent,
-      args: [content.title, htmlContent],
+      args: [content.title, htmlContent, content.desc || null, content.thumb || null],
       world: 'MAIN',
     })
   } catch (e) {
@@ -393,6 +415,10 @@ async function syncWechatContent(tab, content, helpers) {
   }
 
   console.log('[COSE] 微信内容填充成功，字数:', fillResult.wordCount)
+  const wxBits = []
+  if (fillResult.descFilled) wxBits.push('摘要OK')
+  if (fillResult.coverDiag) wxBits.push(`封面入口:label${fillResult.coverDiag.labels}/input${fillResult.coverDiag.fileInputs}`)
+  var wxSuffix = wxBits.length ? `（${wxBits.join('，')}）` : ''
 
   // 步骤6：等待内容稳定后，点击保存为草稿按钮
   await new Promise(resolve => setTimeout(resolve, 500))
@@ -402,7 +428,7 @@ async function syncWechatContent(tab, content, helpers) {
     world: 'MAIN',
   })
 
-  return { success: true, message: '已同步并保存为草稿', tabId: tab.id }
+  return { success: true, message: '已同步并保存为草稿' + wxSuffix, tabId: tab.id }
 }
 
 // 导出

@@ -801,11 +801,19 @@ async function syncToPlatform(platformId, content) {
       // 等待页面加载完成
       await new Promise(resolve => setTimeout(resolve, 3000))
 
-      // 在页面中执行：点击"新的创作"并等待编辑器加载
+      // 在页面中执行：编辑器直达则跳过点击，否则点"新的创作"并等待编辑器加载
       const clickResult = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: async () => {
           const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+          // quantclaw: 长文页可能直达编辑器，先检查
+          const editorReady = () =>
+            document.querySelector('[contenteditable="true"]') ||
+            document.querySelector('textarea') ||
+            document.querySelector('.editor') ||
+            document.querySelector('.content-editor')
+          if (editorReady()) return { success: true, message: 'Editor already present' }
 
           // 查找"新的创作"按钮
           const createBtn = Array.from(document.querySelectorAll('button')).find(el =>
