@@ -281,21 +281,26 @@ function wechatSetCoverByDrop(coverUrl) {
         target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
         await sleep(150)
       }
-      // 等裁剪框出现
+      // 等裁剪框出现：拖拽后出现的任一可见 dialog 即视为封面处理弹窗
       const dlgSel = '.weui-desktop-dialog, [role="dialog"], [class*="crop" i], [class*="dialog" i]'
       let dlg = null
       const t1 = Date.now()
       while (Date.now() - t1 < 12000) {
-        dlg = Array.from(document.querySelectorAll(dlgSel))
-          .find(d => vis(d) && d.querySelector('img, canvas, [class*="crop" i]'))
-        if (dlg) break
+        const cands = Array.from(document.querySelectorAll(dlgSel)).filter(d => vis(d))
+        if (cands.length) { dlg = cands[cands.length - 1]; break }
         await sleep(500)
       }
       dbg.dlgCls = dlg ? String(dlg.className).slice(0, 70) : null
       let crop = null
       if (dlg) {
-        const findOk = () => Array.from(dlg.querySelectorAll('button, a, [class*="btn" i]'))
-          .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && vis(b))
+        // 优先底部主按钮（确认），否则文案匹配
+        const findOk = () => {
+          const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary')
+            || dlg.querySelector('.weui-desktop-btn_primary')
+          if (prim && vis(prim)) return prim
+          return Array.from(dlg.querySelectorAll('button, a, [class*="btn" i]'))
+            .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && vis(b))
+        }
         let okBtn = null
         const t2 = Date.now()
         while (Date.now() - t2 < 10000) {
