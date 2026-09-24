@@ -4196,6 +4196,7 @@ async function handleBridgeRequest(method, params) {
 
 // 探测微信公众号封面临近 DOM（quantclaw 诊断）：找编辑 tab → 点封面入口 → 返回弹窗结构
 async function bridgeWechatCoverProbe(params) {
+  if (params.dropUrl) return await probeWechatCoverDrop(params)
   const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
@@ -4236,6 +4237,68 @@ async function bridgeWechatCoverProbe(params) {
       })()
     },
     args: [params.click !== false],
+    world: 'MAIN',
+  })
+  return result ?? {}
+}
+
+// 探测：封面拖拽到哪个目标才会出裁剪框（逐个试 + 真 dialog 检测）
+async function probeWechatCoverDrop(params) {
+  const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
+  const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
+  if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
+  try { await chrome.tabs.update(editorTab.id, { active: true }) } catch {}
+  await new Promise(r => setTimeout(r, 800))
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: editorTab.id },
+    func: async (dropUrl) => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms))
+      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const realDialog = () => {
+        const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+        return hit.length ? hit[hit.length - 1] : null
+      }
+      const out = { tried: [] }
+      let blob
+      try {
+        const resp = await fetch(dropUrl)
+        blob = await resp.blob()
+      } catch (e) { return { err: 'fetch: ' + String(e?.message ?? e) } }
+      const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0]
+      const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
+      const targets = [
+        ['js_cover_area', '#js_cover_area'],
+        ['outer_drop', '.select-cover_outer_drop'],
+        ['inner_drop', '.select-cover_inner_drop'],
+        ['drop_wrp', '.cover_drop_inner_wrp'],
+        ['cover_btn', '.js_cover_btn_area'],
+        ['body', 'body'],
+      ]
+      for (const [name, sel] of targets) {
+        const el = document.querySelector(sel)
+        if (!el) { out.tried.push({ name, skip: 'not-found' }); continue }
+        const dt = new DataTransfer()
+        dt.items.add(file)
+        for (const type of ['dragenter', 'dragover', 'drop']) {
+          el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
+          await sleep(120)
+        }
+        await sleep(1300)
+        const d = realDialog()
+        out.tried.push({ name, dialog: d ? String(d.className).slice(0, 70) : null,
+          dlgText: d ? (d.textContent || '').trim().slice(0, 60) : null })
+        if (d) {
+          out.hit = name
+          out.dialogButtons = Array.from(d.querySelectorAll('button')).filter(vis)
+            .map(b => ({ t: (b.textContent || '').trim().slice(0, 10), cls: String(b.className).slice(0, 70) })).slice(0, 10)
+          break
+        }
+      }
+      out.fileInputs = Array.from(document.querySelectorAll('input[type="file"]'))
+        .map(i => ({ accept: i.accept, cls: String(i.className).slice(0, 50), vis: vis(i) }))
+      return out
+    },
+    args: [String(params.dropUrl)],
     world: 'MAIN',
   })
   return result ?? {}
