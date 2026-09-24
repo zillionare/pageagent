@@ -12,141 +12,140 @@ const ZhihuPlatform = {
 import { injectUtils } from './common.js'
 
 
-// ---- quantclaw 移植自 xpress（cose 前台 tab，直接 btn.click 有效，无需 CDP） ----
-function qcVisible(el) {
-  if (!el) return false
-  const r = el.getBoundingClientRect()
-  return r.width > 0 && r.height > 0
-}
-async function qcUploadArticleCover(coverUrl) {
-  if (!coverUrl) return { done: 0, skipped: 'no-cover' }
-  const dbg = {}
-  const label = Array.from(document.querySelectorAll('label'))
-    .find(el => (el.textContent ?? '').includes('添加封面') && qcVisible(el))
-  dbg.labelFound = !!label
-  dbg.labelCount = Array.from(document.querySelectorAll('label')).filter(el => (el.textContent ?? '').includes('封面')).length
-  if (label) {
-    try { label.scrollIntoView({ block: 'center' }) } catch {}
-    await new Promise(r => setTimeout(r, 300))
-    // 点 label 唤出 input（知乎封面 input 可能是点击后才挂载）
-    try { label.click() } catch {}
-    await new Promise(r => setTimeout(r, 800))
-  }
-  let input = label?.querySelector?.('input[type="file"]')
-    || document.querySelector('label.UploadPicture-wrapper input[type="file"]')
-  if (!input) {
-    for (let i = 0; i < 8 && !input; i++) {
-      const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(el => !el.disabled)
-      dbg.fileInputCount = inputs.length
-      input = inputs.find(el => /image|jpg|jpeg|png/i.test(el.accept || '')) || inputs[inputs.length - 1]
-      if (!input) await new Promise(r => setTimeout(r, 800))
-    }
-  }
-  dbg.inputFound = !!input
-  if (!input) return { done: 0, err: 'no-cover-input', dbg }
-  const before = document.querySelectorAll('.UploadPicture-wrapper img, [class*="cover" i] img').length
-  try {
-    const blob = await (await fetch(coverUrl)).blob()
-    const ext = (blob.type.split('/')[1] ?? 'jpg').split('+')[0]
-    const file = new File([blob], `cover_${Date.now()}.${ext}`, { type: blob.type || 'image/jpeg' })
-    const dt = new DataTransfer()
-    dt.items.add(file)
-    input.files = dt.files
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-  }
-  catch (e) { dbg.inputAccept = input.accept; return { done: 0, err: 'fetch-or-fill: ' + String(e?.message ?? e), dbg } }
-  dbg.filled = true
-  const t0 = Date.now()
-  while (Date.now() - t0 < 30000) {
-    if (document.querySelectorAll('.UploadPicture-wrapper img, [class*="cover" i] img').length > before
-      || /更换封面|重新上传|删除/.test(document.body.textContent ?? '')) return { done: 1 }
-    await new Promise(r => setTimeout(r, 800))
-  }
-  return { done: 0, err: 'cover-upload-timeout', dbg }
-}
-async function qcAddArticleTopics(topics) {
-  const list = (topics ?? []).map(t => String(t).replace(/^#+/, '').trim()).filter(Boolean).slice(0, 3)
-  if (!list.length) return { done: 0, skipped: 'no-topics' }
-  let done = 0
-  const detail = []
-  const isVisible = qcVisible
-  for (const tag of list) {
-    const d = { tag }
-    try {
-      const addBtn = Array.from(document.querySelectorAll('button'))
-        .find(b => (b.textContent ?? '').trim().includes('添加话题') && isVisible(b))
-      if (!addBtn) { d.err = 'no-add-btn'; detail.push(d); continue }
-      try { addBtn.scrollIntoView({ block: 'center' }) } catch {}
-      await new Promise(r => setTimeout(r, 500))
-      addBtn.click()
-      await new Promise(r => setTimeout(r, 1200))
-      let box = null
-      for (let i = 0; i < 8 && !box; i++) {
-        const cands = Array.from(document.querySelectorAll('.Modal-inner input[placeholder], input[placeholder*="话题"], input[placeholder*="搜索"]'))
-          .filter(el => isVisible(el))
-        box = cands[cands.length - 1] || null
-        if (!box) await new Promise(r => setTimeout(r, 800))
-      }
-      if (!box) { d.err = 'no-search-box'; detail.push(d); continue }
-      d.boxFound = true
-      // 前台 tab：execCommand insertText 真按键，React 搜索请求可触发
-      box.focus()
-      box.select?.()
-      try { document.execCommand('selectAll', false, null) } catch {}
-      try { document.execCommand('delete', false, null) } catch {}
-      box.value = ''
-      box.dispatchEvent(new Event('input', { bubbles: true }))
-      let typeOk = true
-      for (const ch of tag) {
-        let ok = false
-        try { ok = document.execCommand('insertText', false, ch) } catch {}
-        if (!ok) { typeOk = false; break }
-        await new Promise(r => setTimeout(r, 60))
-      }
-      if (!typeOk) {
-        const proto = box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
-        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
-        if (setter) setter.call(box, tag)
-        else box.value = tag
-        box.dispatchEvent(new Event('input', { bubbles: true }))
-      }
-      d.boxValue = (box.value ?? '').slice(0, 20)
-      await new Promise(r => setTimeout(r, 2500))
-      const chipsBefore = document.querySelectorAll('.css-nut0iz').length
-      const items = Array.from(document.querySelectorAll('li, button, [role="option"]'))
-        .filter(el => isVisible(el) && (el.textContent ?? '').trim().length > 0
-          && !/添加话题|文章话题/.test(el.textContent ?? '')
-          && !el.closest?.('.toolbar-section, .Toolbar, [class*="Toolbar"]')
-          && el !== addBtn)
-      d.suggestCount = items.length
-      const first = items.find(el => (el.textContent ?? '').includes(tag)) || items[0]
-      if (first) {
-        d.firstText = (first.textContent ?? '').trim().slice(0, 40)
-        first.click()
-        await new Promise(r => setTimeout(r, 1500))
-        const chipsAfter = document.querySelectorAll('.css-nut0iz').length
-        d.chipsAfter = chipsAfter
-        if (chipsAfter > chipsBefore) done++
-        else d.err = 'chip-not-grown'
-      }
-      else { d.err = 'no-suggest' }
-      try { box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) } catch {}
-      await new Promise(r => setTimeout(r, 600))
-    }
-    catch (e) { d.err = String(e?.message ?? e) }
-    detail.push(d)
-  }
-  return { done, detail }
-}
-// alias（fillZhihuContent 内调用名）
-const uploadArticleCover = qcUploadArticleCover
-const addArticleTopics = qcAddArticleTopics
-
 // 知乎内容填充函数（在页面主世界中执行）
 // 知乎现在支持直接粘贴 Markdown，然后弹窗提示转换
 // 注意：需要先调用 injectUtils 注入 window.waitFor
 function fillZhihuContent(title, markdown, cover, topics) {
+  // ---- quantclaw 移植自 xpress（cose 前台 tab，直接 btn.click 有效，无需 CDP） ----
+  function qcVisible(el) {
+    if (!el) return false
+    const r = el.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+  async function qcUploadArticleCover(coverUrl) {
+    if (!coverUrl) return { done: 0, skipped: 'no-cover' }
+    const dbg = {}
+    const label = Array.from(document.querySelectorAll('label'))
+      .find(el => (el.textContent ?? '').includes('添加封面') && qcVisible(el))
+    dbg.labelFound = !!label
+    dbg.labelCount = Array.from(document.querySelectorAll('label')).filter(el => (el.textContent ?? '').includes('封面')).length
+    if (label) {
+      try { label.scrollIntoView({ block: 'center' }) } catch {}
+      await new Promise(r => setTimeout(r, 300))
+      // 点 label 唤出 input（知乎封面 input 可能是点击后才挂载）
+      try { label.click() } catch {}
+      await new Promise(r => setTimeout(r, 800))
+    }
+    let input = label?.querySelector?.('input[type="file"]')
+      || document.querySelector('label.UploadPicture-wrapper input[type="file"]')
+    if (!input) {
+      for (let i = 0; i < 8 && !input; i++) {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(el => !el.disabled)
+        dbg.fileInputCount = inputs.length
+        input = inputs.find(el => /image|jpg|jpeg|png/i.test(el.accept || '')) || inputs[inputs.length - 1]
+        if (!input) await new Promise(r => setTimeout(r, 800))
+      }
+    }
+    dbg.inputFound = !!input
+    if (!input) return { done: 0, err: 'no-cover-input', dbg }
+    const before = document.querySelectorAll('.UploadPicture-wrapper img, [class*="cover" i] img').length
+    try {
+      const blob = await (await fetch(coverUrl)).blob()
+      const ext = (blob.type.split('/')[1] ?? 'jpg').split('+')[0]
+      const file = new File([blob], `cover_${Date.now()}.${ext}`, { type: blob.type || 'image/jpeg' })
+      const dt = new DataTransfer()
+      dt.items.add(file)
+      input.files = dt.files
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    catch (e) { dbg.inputAccept = input.accept; return { done: 0, err: 'fetch-or-fill: ' + String(e?.message ?? e), dbg } }
+    dbg.filled = true
+    const t0 = Date.now()
+    while (Date.now() - t0 < 30000) {
+      if (document.querySelectorAll('.UploadPicture-wrapper img, [class*="cover" i] img').length > before
+        || /更换封面|重新上传|删除/.test(document.body.textContent ?? '')) return { done: 1 }
+      await new Promise(r => setTimeout(r, 800))
+    }
+    return { done: 0, err: 'cover-upload-timeout', dbg }
+  }
+  async function qcAddArticleTopics(topics) {
+    const list = (topics ?? []).map(t => String(t).replace(/^#+/, '').trim()).filter(Boolean).slice(0, 3)
+    if (!list.length) return { done: 0, skipped: 'no-topics' }
+    let done = 0
+    const detail = []
+    const isVisible = qcVisible
+    for (const tag of list) {
+      const d = { tag }
+      try {
+        const addBtn = Array.from(document.querySelectorAll('button'))
+          .find(b => (b.textContent ?? '').trim().includes('添加话题') && isVisible(b))
+        if (!addBtn) { d.err = 'no-add-btn'; detail.push(d); continue }
+        try { addBtn.scrollIntoView({ block: 'center' }) } catch {}
+        await new Promise(r => setTimeout(r, 500))
+        addBtn.click()
+        await new Promise(r => setTimeout(r, 1200))
+        let box = null
+        for (let i = 0; i < 8 && !box; i++) {
+          const cands = Array.from(document.querySelectorAll('.Modal-inner input[placeholder], input[placeholder*="话题"], input[placeholder*="搜索"]'))
+            .filter(el => isVisible(el))
+          box = cands[cands.length - 1] || null
+          if (!box) await new Promise(r => setTimeout(r, 800))
+        }
+        if (!box) { d.err = 'no-search-box'; detail.push(d); continue }
+        d.boxFound = true
+        // 前台 tab：execCommand insertText 真按键，React 搜索请求可触发
+        box.focus()
+        box.select?.()
+        try { document.execCommand('selectAll', false, null) } catch {}
+        try { document.execCommand('delete', false, null) } catch {}
+        box.value = ''
+        box.dispatchEvent(new Event('input', { bubbles: true }))
+        let typeOk = true
+        for (const ch of tag) {
+          let ok = false
+          try { ok = document.execCommand('insertText', false, ch) } catch {}
+          if (!ok) { typeOk = false; break }
+          await new Promise(r => setTimeout(r, 60))
+        }
+        if (!typeOk) {
+          const proto = box.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+          if (setter) setter.call(box, tag)
+          else box.value = tag
+          box.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+        d.boxValue = (box.value ?? '').slice(0, 20)
+        await new Promise(r => setTimeout(r, 2500))
+        const chipsBefore = document.querySelectorAll('.css-nut0iz').length
+        const items = Array.from(document.querySelectorAll('li, button, [role="option"]'))
+          .filter(el => isVisible(el) && (el.textContent ?? '').trim().length > 0
+            && !/添加话题|文章话题/.test(el.textContent ?? '')
+            && !el.closest?.('.toolbar-section, .Toolbar, [class*="Toolbar"]')
+            && el !== addBtn)
+        d.suggestCount = items.length
+        const first = items.find(el => (el.textContent ?? '').includes(tag)) || items[0]
+        if (first) {
+          d.firstText = (first.textContent ?? '').trim().slice(0, 40)
+          first.click()
+          await new Promise(r => setTimeout(r, 1500))
+          const chipsAfter = document.querySelectorAll('.css-nut0iz').length
+          d.chipsAfter = chipsAfter
+          if (chipsAfter > chipsBefore) done++
+          else d.err = 'chip-not-grown'
+        }
+        else { d.err = 'no-suggest' }
+        try { box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) } catch {}
+        await new Promise(r => setTimeout(r, 600))
+      }
+      catch (e) { d.err = String(e?.message ?? e) }
+      detail.push(d)
+    }
+    return { done, detail }
+  }
+  // alias（fillZhihuContent 内调用名）
+  const uploadArticleCover = qcUploadArticleCover
+  const addArticleTopics = qcAddArticleTopics
   // 等待满足条件的元素出现（使用 MutationObserver）
   function waitForElement(predicate, timeout = 10000) {
     return new Promise(resolve => {
@@ -365,6 +364,16 @@ async function syncZhihuContent(tab, content, helpers) {
   // 先注入公共工具函数（waitFor 使用 MutationObserver）
   await injectUtils(globalThis.chrome, tab.id)
 
+  // quantclaw：content 进来带了什么先记日志（tags/cover 丢在哪一段）
+  try {
+    await fetch('http://127.0.0.1:8787/log', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ step: '[pageagent] zhihu-content', detail: JSON.stringify({
+        hasThumb: !!content.thumb, hasCover: !!content.cover, tags: content.tags ?? null,
+      }).slice(0, 300) }),
+    })
+  } catch {}
   // 在页面中执行内容填充
   const result = await globalThis.chrome.scripting.executeScript({
     target: { tabId: tab.id },
