@@ -957,6 +957,28 @@ async function syncToPlatform(platformId, content) {
                   importRes.dlgMiss = true
                   importRes.bodySample = document.body.innerHTML.slice(-500)
                 }
+                // .import-from-file-modal 是文件上传：markdown 写成 File 塞 input
+                const fileInput = dlg?.querySelector('input[type="file"]') ?? null
+                if (fileInput) {
+                  const mdFile = new File([pasteBody], 'article.md', { type: 'text/markdown' })
+                  const dt3 = new DataTransfer()
+                  dt3.items.add(mdFile)
+                  fileInput.files = dt3.files
+                  fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+                  fileInput.dispatchEvent(new Event('input', { bubbles: true }))
+                  importRes.fileSent = true
+                  await new Promise(r => setTimeout(r, 3000))
+                  const okBtn2 = Array.from((dlg ?? document).querySelectorAll('button'))
+                    .find(b => /导入|确认|确定|完成|开始/.test((b.textContent ?? '').trim()) && b.getBoundingClientRect().width > 0)
+                  if (okBtn2) {
+                    okBtn2.click()
+                    importRes.ok = true
+                    await new Promise(r => setTimeout(r, 5000))
+                  } else {
+                    importRes.ok = true
+                    await new Promise(r => setTimeout(r, 5000))
+                  }
+                } else {
                 const area = dlg?.querySelector('textarea, [contenteditable="true"], .CodeMirror')
                   ?? document.querySelector('[role="dialog"] textarea, .d-modal textarea')
                 if (area) {
@@ -985,6 +1007,7 @@ async function syncToPlatform(platformId, content) {
                   importRes.err = 'no-import-area'
                   importRes.dlgHtml = (dlg?.innerHTML ?? '').slice(0, 600)
                   importRes.dlgCls = dlg?.className ?? ''
+                }
                 }
               } else { importRes.err = 'no-import-btn' }
             }
