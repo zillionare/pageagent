@@ -259,17 +259,74 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
   }
 }
 
-// 微信公众号保存草稿函数（在页面主世界中执行）
+// 微信公众号封面：拖拽图片到封面区（#js_cover_area，支持「拖拽或选择封面」）
+function wechatSetCoverByDrop(coverUrl) {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    try {
+      const area = document.querySelector('#js_cover_area')
+      if (!area) return { ok: false, err: 'no-cover-area' }
+      const resp = await fetch(coverUrl)
+      if (!resp.ok) return { ok: false, err: 'fetch ' + resp.status }
+      const blob = await resp.blob()
+      const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0]
+      const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
+      const dt = new DataTransfer()
+      dt.items.add(file)
+      const targets = [
+        document.querySelector('.cover_drop_inner_wrp'),
+        document.querySelector('.select-cover_outer_drop'),
+        document.querySelector('.js_cover_btn_area'),
+        area,
+      ].filter(Boolean)
+      for (const tgt of targets) {
+        for (const type of ['dragenter', 'dragover', 'drop']) {
+          tgt.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
+          await sleep(120)
+        }
+      }
+      // 等封面预览出现（背景图/display 变化）
+      const t0 = Date.now()
+      while (Date.now() - t0 < 30000) {
+        const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
+        if (prev) {
+          const bg = (prev.style && prev.style.backgroundImage) || ''
+          if (bg && bg !== 'none' && !bg.includes('url(\"\")')) return { ok: true, via: 'preview-bg', bg: bg.slice(0, 80) }
+          if (prev.style.display && prev.style.display !== 'none') return { ok: true, via: 'preview-shown' }
+          const img = prev.querySelector('img')
+          if (img && img.src) return { ok: true, via: 'preview-img', src: String(img.src).slice(0, 80) }
+        }
+        await sleep(800)
+      }
+      return { ok: false, err: 'cover-preview-timeout' }
+    } catch (e) {
+      return { ok: false, err: String(e && e.message || e) }
+    }
+  })()
+}
+
+// 微信公众号保存草稿函数（页面主世界中执行）：点击 + 等保存成功提示
 function saveWechatDraft() {
-  const saveDraftBtn = Array.from(document.querySelectorAll('button')).find(b =>
-    b.textContent.includes('保存为草稿')
-  )
-  if (saveDraftBtn) {
-    saveDraftBtn.click()
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const findBtn = () => Array.from(document.querySelectorAll('button')).find(b =>
+      (b.textContent || '').includes('保存为草稿'))
+    const btn = findBtn()
+    if (!btn) return { success: false, error: '未找到保存按钮' }
+    btn.click()
     console.log('[COSE] 已点击保存为草稿')
-    return { success: true }
-  }
-  return { success: false, error: '未找到保存按钮' }
+    // 等成功提示（toast/文案），最多 15s
+    const t0 = Date.now()
+    while (Date.now() - t0 < 15000) {
+      const nodes = Array.from(document.querySelectorAll('[class*="toast" i], [class*="tips" i], .weui-desktop-toast, [class*="message" i]'))
+      const hit = nodes.find(n => vis(n) && /保存成功|已保存|保存为草稿成功|草稿保存成功/.test(n.textContent || ''))
+      if (hit) return { success: true, via: 'toast' }
+      await sleep(700)
+    }
+    return { success: false, error: '保存提示未出现（可能仍在保存）' }
+  })()
 }
 
 /**
@@ -420,15 +477,51 @@ async function syncWechatContent(tab, content, helpers) {
   if (fillResult.coverDiag) wxBits.push(`封面入口:label${fillResult.coverDiag.labels}/input${fillResult.coverDiag.fileInputs}`)
   var wxSuffix = wxBits.length ? `（${wxBits.join('，')}）` : ''
 
-  // 步骤6：等待内容稳定后，点击保存为草稿按钮
-  await new Promise(resolve => setTimeout(resolve, 500))
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: saveWechatDraft,
-    world: 'MAIN',
-  })
+  // 步骤5b：封面（frontmatter thumb → 封面区拖拽）
+  let coverRes = null
+  if (content.thumb) {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: wechatSetCoverByDrop,
+        args: [content.thumb],
+        world: 'MAIN',
+      })
+      coverRes = result
+    } catch (e) { coverRes = { ok: false, err: String(e?.message ?? e) } }
+    console.log('[COSE] 微信封面结果:', JSON.stringify(coverRes))
+    await new Promise(resolve => setTimeout(resolve, 2000))
+  }
 
-  return { success: true, message: '已同步并保存为草稿' + wxSuffix, tabId: tab.id }
+  // 步骤6：保存为草稿（点击 + 验证提示）
+  await new Promise(resolve => setTimeout(resolve, 500))
+  let saveRes = null
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: saveWechatDraft,
+      world: 'MAIN',
+    })
+    saveRes = result
+  } catch (e) { saveRes = { success: false, error: String(e?.message ?? e) } }
+  console.log('[COSE] 微信保存结果:', JSON.stringify(saveRes))
+
+  // 结果上报桥日志
+  try {
+    const bb = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787' })
+    await fetch(((bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '')) + '/log', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ step: '[pageagent] wechat-done', detail: JSON.stringify({
+        cover: coverRes, save: saveRes, wordCount: fillResult.wordCount, imageCount: fillResult.imageCount,
+      }).slice(0, 900) }),
+    })
+  } catch {}
+
+  const bits2 = []
+  if (coverRes) bits2.push('封面:' + (coverRes.ok ? 'OK' : 'FAIL:' + (coverRes.err ?? '?')))
+  bits2.push('草稿:' + (saveRes?.success ? 'OK' : 'FAIL:' + (saveRes?.error ?? '?')))
+  const wxSuffix2 = `（${bits2.join('，')}）`
+  return { success: true, message: '已同步并保存为草稿' + wxSuffix + wxSuffix2, tabId: tab.id }
 }
 
 // 导出
