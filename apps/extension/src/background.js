@@ -932,6 +932,47 @@ async function syncToPlatform(platformId, content) {
             // 无 markdown 才降级 HTML
             const pasteBody = mdBody || ''
             const useMd = !!mdBody
+            // quantclaw: markdown 走导入按钮（工具栏最后一个 menu-item，导入符号图标）；
+            // 粘贴 markdown 不解析（已验证 gotImgs:0），必须点导入对话框
+            const importRes = { tried: false, ok: false }
+            if (useMd) {
+              importRes.tried = true
+              const menuItems = Array.from(document.querySelectorAll('.menu-items-container button.menu-item'))
+                .filter(el => el.getBoundingClientRect().width > 0)
+              // 导入按钮是最后一个（含导入符号 svg），按 path 数量/形状辅助确认
+              const importBtn = menuItems[menuItems.length - 1] ?? null
+              if (importBtn) {
+                importBtn.click()
+                await new Promise(r => setTimeout(r, 1500))
+                // 导入对话框：找 textarea/codeMirror 或粘贴区，塞 markdown 后点确认/导入
+                const dlg = document.querySelector('[role="dialog"], .d-modal, .d-drawer')
+                const area = dlg?.querySelector('textarea, [contenteditable="true"], .CodeMirror')
+                  ?? document.querySelector('[role="dialog"] textarea, .d-modal textarea')
+                if (area) {
+                  area.focus()
+                  if (area.tagName === 'TEXTAREA') {
+                    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+                    if (setter) setter.call(area, pasteBody)
+                    else area.value = pasteBody
+                    area.dispatchEvent(new Event('input', { bubbles: true }))
+                  } else {
+                    area.textContent = pasteBody
+                    area.dispatchEvent(new Event('input', { bubbles: true }))
+                    const dt2 = new DataTransfer()
+                    dt2.setData('text/plain', pasteBody)
+                    area.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt2 }))
+                  }
+                  await new Promise(r => setTimeout(r, 800))
+                  const okBtn = Array.from((dlg ?? document).querySelectorAll('button'))
+                    .find(b => /导入|确认|确定|完成/.test((b.textContent ?? '').trim()) && b.getBoundingClientRect().width > 0)
+                  if (okBtn) {
+                    okBtn.click()
+                    importRes.ok = true
+                    await new Promise(r => setTimeout(r, 3000))
+                  } else { importRes.err = 'no-confirm-btn' }
+                } else { importRes.err = 'no-import-area' }
+              } else { importRes.err = 'no-import-btn' }
+            }
             if (contentEditor && (pasteBody || htmlBody)) {
               contentEditor.focus()
 
@@ -984,9 +1025,9 @@ async function syncToPlatform(platformId, content) {
                 contentEditor.innerHTML = htmlBody
               }
 
-              return { success: true, method: useMd ? 'paste-markdown' : 'paste-html',
+              return { success: true, method: useMd ? (importRes.ok ? 'import-dialog' : 'paste-markdown') : 'paste-html',
                 length: (pasteBody || htmlBody).length,
-                expectImgs: mdImgCount, gotImgs: imgCount }
+                expectImgs: mdImgCount, gotImgs: imgCount, import: importRes }
             }
 
             return { success: false, error: 'Content editor not found' }
