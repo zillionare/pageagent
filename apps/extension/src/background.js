@@ -4049,6 +4049,17 @@ try {
   console.log(`[PageAgent v${chrome.runtime.getManifest().version}] SW 启动`)
 } catch {}
 
+// ===== PageAgent 日志上报（quantclaw）：SW 直接 POST :8787/log，进 xpress.log =====
+async function pageAgentLog(step, detail = '') {
+  try {
+    await fetch('http://127.0.0.1:8787/log', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ step: '[pageagent] ' + step, detail: String(detail).slice(0, 500) }),
+    })
+  } catch {}
+}
+
 // ===== PageAgent 桥（quantclaw）：连 CF :8787，供后台 crawl/抓取任务 =====
 let pageAgentBridge = null
 try {

@@ -402,6 +402,16 @@ async function syncZhihuContent(tab, content, helpers) {
     if (fillResult?.cover) bits.push(`封面:${fillResult.cover.done ? 'OK' : ('FAIL:' + (fillResult.cover.err ?? fillResult.cover.skipped ?? '?'))}`)
     if (fillResult?.topics) bits.push(`话题:${fillResult.topics.done ?? 0}/3${fillResult.topics.err ? ':' + fillResult.topics.err : ''}`)
     const suffix = bits.length ? `（${bits.join('，')}）` : ''
+    try {
+      await fetch('http://127.0.0.1:8787/log', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ step: '[pageagent] zhihu-done', detail: JSON.stringify({
+          cover: fillResult?.cover ?? null,
+          topics: fillResult?.topics ?? null,
+        }).slice(0, 800) }),
+      })
+    } catch {}
     return { success: true, message: '已打开知乎并同步内容' + suffix, tabId: tab.id }
   } else {
     return { success: false, message: fillResult?.error || '内容同步失败', tabId: tab.id }
