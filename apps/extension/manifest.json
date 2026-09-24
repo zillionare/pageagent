@@ -55,7 +55,9 @@
     "https://*.byteacctimg.com/*",
     "https://*.douyin.com/*",
     "https://*.xiaohongshu.com/*",
-    "https://*.elecfans.com/*"
+    "https://*.elecfans.com/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "action": {
     "default_icon": {
