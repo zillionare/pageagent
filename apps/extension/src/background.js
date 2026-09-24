@@ -862,14 +862,15 @@ async function syncToPlatform(platformId, content) {
       // 等待页面稳定
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      // 使用剪贴板 HTML（带完整样式）或降级到 body
+      // quantclaw: markdown 优先（编辑器导入路径自拉图；HTML 粘贴会被过滤 img）
+      const mdContent = content.markdown || ''
       const htmlContent = content.wechatHtml || content.body
-      console.log('[COSE] 小红书 HTML 内容长度:', htmlContent?.length || 0)
+      console.log('[COSE] 小红书 markdown 长度:', mdContent.length, 'HTML 长度:', htmlContent?.length || 0)
 
       // 填充标题和内容
       const fillResult = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: async (title, htmlBody) => {
+        func: async (title, mdBody, htmlBody) => {
           const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
           // 等待元素出现的工具函数
@@ -924,10 +925,14 @@ async function syncToPlatform(platformId, content) {
 
             // 等待并查找内容编辑器
             const contentEditor = await waitForElement(
-              '[contenteditable="true"], .editor-content, .content-editor',
+              '.tiptap.ProseMirror[contenteditable="true"], [contenteditable="true"], .editor-content, .content-editor',
               5000
             )
-            if (contentEditor && htmlBody) {
+            // quantclaw: markdown 优先粘贴（text/plain，走编辑器 markdown 导入路径，图片自拉）；
+            // 无 markdown 才降级 HTML
+            const pasteBody = mdBody || ''
+            const useMd = !!mdBody
+            if (contentEditor && (pasteBody || htmlBody)) {
               contentEditor.focus()
 
               // 清空现有占位符内容
@@ -939,10 +944,14 @@ async function syncToPlatform(platformId, content) {
                 contentEditor.innerHTML = ''
               }
 
-              // 使用 ClipboardEvent + DataTransfer 注入 HTML
+              // 使用 ClipboardEvent + DataTransfer 注入
               const dt = new DataTransfer()
-              dt.setData('text/html', htmlBody)
-              dt.setData('text/plain', htmlBody.replace(/<[^>]*>/g, ''))
+              if (useMd) {
+                dt.setData('text/plain', pasteBody)
+              } else {
+                dt.setData('text/html', htmlBody)
+                dt.setData('text/plain', htmlBody.replace(/<[^>]*>/g, ''))
+              }
 
               const pasteEvent = new ClipboardEvent('paste', {
                 bubbles: true,
@@ -951,20 +960,33 @@ async function syncToPlatform(platformId, content) {
               })
 
               contentEditor.dispatchEvent(pasteEvent)
-              console.log('[COSE] 小红书内容已通过 paste 事件注入')
+              console.log('[COSE] 小红书内容已通过 paste 事件注入（' + (useMd ? 'markdown' : 'html') + '）')
 
-              // 等待内容渲染
-              await new Promise(r => setTimeout(r, 500))
+              // 等待内容渲染 + 图片自拉（markdown 图数对上才算完，最多 60s）
+              const mdImgCount = useMd ? [...pasteBody.matchAll(/!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/g)].length : 0
+              if (useMd && mdImgCount) {
+                const t0 = Date.now()
+                while (Date.now() - t0 < 60000) {
+                  const n = contentEditor.querySelectorAll('img').length
+                  if (n >= mdImgCount) break
+                  await new Promise(r => setTimeout(r, 1500))
+                }
+              } else {
+                await new Promise(r => setTimeout(r, 500))
+              }
 
               // 验证内容是否注入成功
               const wordCount = contentEditor.textContent?.length || 0
-              if (wordCount === 0) {
-                // 备用方案：直接设置 innerHTML
+              const imgCount = contentEditor.querySelectorAll('img').length
+              if (wordCount === 0 && !useMd) {
+                // 备用方案：直接设置 innerHTML（仅 HTML 路径）
                 console.log('[COSE] paste 事件未生效，尝试备用方案')
                 contentEditor.innerHTML = htmlBody
               }
 
-              return { success: true, method: 'paste-html', length: htmlBody.length }
+              return { success: true, method: useMd ? 'paste-markdown' : 'paste-html',
+                length: (pasteBody || htmlBody).length,
+                expectImgs: mdImgCount, gotImgs: imgCount }
             }
 
             return { success: false, error: 'Content editor not found' }
@@ -973,7 +995,7 @@ async function syncToPlatform(platformId, content) {
             return { success: false, error: e.message }
           }
         },
-        args: [content.title, htmlContent],
+        args: [content.title, mdContent, htmlContent],
         world: 'MAIN',
       })
 
@@ -982,7 +1004,16 @@ async function syncToPlatform(platformId, content) {
       // 等待内容注入完成
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      return { success: true, message: '已同步到小红书', tabId: tab.id }
+      const _fr = fillResult[0]?.result ?? {}
+      const _imgBits = _fr.expectImgs ? `（图${_fr.gotImgs ?? 0}/${_fr.expectImgs}）` : ''
+      try {
+        const _bb = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787' })
+        await fetch((_bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '') + '/log', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ step: '[pageagent] xhs-done', detail: JSON.stringify(_fr).slice(0, 500) }),
+        })
+      } catch {}
+      return { success: true, message: '已同步到小红书' + _imgBits, tabId: tab.id }
     } else if (platformId === 'twitter') {
       // Twitter Articles：需要先打开草稿列表页，然后点击 create 按钮创建新文章
       // 注意：Twitter 使用 Page Visibility API，后台标签页不会渲染编辑器
@@ -4061,6 +4092,7 @@ async function pageAgentLog(step, detail = '') {
 }
 
 // ===== PageAgent 桥（quantclaw）：连 CF :8787，供后台 crawl/抓取任务 =====
+// 桥地址存 chrome.storage.sync（popup 可改，Chrome 可跑在任意机器）
 let pageAgentBridge = null
 try {
   ensurePageAgentBridge(handleBridgeRequest).then((c) => {
@@ -4072,6 +4104,14 @@ try {
 } catch (e) {
   console.log('[PageAgent] 桥初始化异常', e?.message ?? e)
 }
+// popup 改桥地址 → SW 重连
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'pageagent-bridge-changed' && pageAgentBridge) {
+    pageAgentBridge.reconnect(msg.base).then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: String(e?.message ?? e) }))
+    return true
+  }
+  return false
+})
 
 async function handleBridgeRequest(method, params) {
   if (method === 'version') {

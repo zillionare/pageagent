@@ -15,7 +15,7 @@ import { injectUtils } from './common.js'
 // 知乎内容填充函数（在页面主世界中执行）
 // 知乎现在支持直接粘贴 Markdown，然后弹窗提示转换
 // 注意：需要先调用 injectUtils 注入 window.waitFor
-function fillZhihuContent(title, markdown, cover, topics) {
+function fillZhihuContent(title, markdown, cover, topics, bridgeBase) {
   // ---- quantclaw 移植自 xpress（cose 前台 tab，直接 btn.click 有效，无需 CDP） ----
   function qcVisible(el) {
     if (!el) return false
@@ -395,8 +395,14 @@ async function syncZhihuContent(tab, content, helpers) {
   await injectUtils(globalThis.chrome, tab.id)
 
   // quantclaw：content 进来带了什么先记日志（tags/cover 丢在哪一段）
+  // 桥地址：SW 从 storage 读（Chrome 可跑任意机器，不写死 127.0.0.1）
+  let _bridgeBase = 'http://127.0.0.1:8787'
   try {
-    await fetch('http://127.0.0.1:8787/log', {
+    const _st = await globalThis.chrome?.storage?.sync?.get({ pageagent_bridge: _bridgeBase })
+    if (_st?.pageagent_bridge) _bridgeBase = String(_st.pageagent_bridge).replace(/\/$/, '')
+  } catch {}
+  try {
+    await fetch(_bridgeBase + '/log', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ step: '[pageagent] zhihu-content', detail: JSON.stringify({
@@ -408,7 +414,7 @@ async function syncZhihuContent(tab, content, helpers) {
   const result = await globalThis.chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: fillZhihuContent,
-    args: [content.title, content.markdown, content.thumb || content.cover || null, content.tags || []],
+    args: [content.title, content.markdown, content.thumb || content.cover || null, content.tags || [], _bridgeBase],
     world: 'MAIN',
   })
 
@@ -442,7 +448,7 @@ async function syncZhihuContent(tab, content, helpers) {
     if (fillResult?.topics) bits.push(`话题:${fillResult.topics.done ?? 0}/3${fillResult.topics.err ? ':' + fillResult.topics.err : ''}`)
     const suffix = bits.length ? `（${bits.join('，')}）` : ''
     try {
-      await fetch('http://127.0.0.1:8787/log', {
+      await fetch(_bridgeBase + '/log', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ step: '[pageagent] zhihu-done', detail: JSON.stringify({
