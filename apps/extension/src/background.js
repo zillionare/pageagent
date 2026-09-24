@@ -4191,6 +4191,9 @@ async function handleBridgeRequest(method, params) {
   if (method === 'wechat_cover_probe') {
     return await bridgeWechatCoverProbe(params ?? {})
   }
+  // quantclaw: xpress 多图发布移植（CF loop 任务调用）
+  if (method === 'publish_content') return await dispatchXpress('publish_content', params ?? {})
+  if (method === 'publish_ring_pin') return await dispatchZhihuPin('publish_ring_pin', params ?? {})
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
 }
 
@@ -4472,3 +4475,187 @@ async function bridgeCrawlArticle(params) {
     if (created && tabId) { try { await chrome.tabs.remove(tabId) } catch {} }
   }
 }
+
+// ===== quantclaw: xpress 多图发布移植（小红书图文 / 知乎圈子想法）=====
+const XPRESS_XHS_FILES = ['content/xpress-common.js', 'content/xpress-xhs-actions.js', 'content/xpress-xhs-publish.js']
+const XPRESS_ZHIHU_FILES = ['content/xpress-common.js', 'content/xpress-zhihu-actions.js', 'content/xpress-zhihu-pin.js']
+const XPRESS_RING_URL = 'https://www.zhihu.com/ring/host/1940469824917603882?tab=new'
+
+async function waitTabCompleteX(tabId, timeout = 45000) {
+  const t0 = Date.now()
+  for (;;) {
+    const t = await chrome.tabs.get(tabId).catch(() => null)
+    if (!t || t.status === 'complete') break
+    if (Date.now() - t0 > timeout) break
+    await new Promise(r => setTimeout(r, 800))
+  }
+}
+
+// 小红书图文多图发布（payload: {title, content, images[], tags[], mode}）
+async function dispatchXpress(action, payload) {
+  let tabs = await chrome.tabs.query({ url: ['https://www.xiaohongshu.com/*', 'https://creator.xiaohongshu.com/*'] })
+  tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
+  let target = tabs[0] ?? null
+  if (!target?.id) {
+    target = await chrome.tabs.create({ url: 'https://creator.xiaohongshu.com/publish/publish?source=official&target=image' })
+    if (!target?.id) throw Object.assign(new Error('无法打开小红书发布页'), { code: -32002 })
+    await waitTabCompleteX(target.id)
+    await new Promise(r => setTimeout(r, 2000))
+  }
+  try { await chrome.tabs.update(target.id, { active: true }) } catch {}
+  const run = async () => {
+    const res = await chrome.tabs.sendMessage(target.id, { type: 'xpress', action, payload })
+    if (res?.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
+    if (res === undefined) throw Object.assign(new Error('页面未响应，请刷新小红书页面后重试'), { code: -32002 })
+    return res?.result ?? res ?? {}
+  }
+  try {
+    return await run()
+  } catch (e) {
+    const msg = e.message ?? ''
+    if (/message channel closed|message port closed|Receiving end does not exist|Could not establish connection/.test(msg)) {
+      const t0 = Date.now()
+      for (;;) {
+        const t = await chrome.tabs.get(target.id).catch(() => null)
+        if (!t) break
+        if (t.status === 'complete' && /xiaohongshu\.com/.test(t.url ?? '')) break
+        if (Date.now() - t0 > 60000) break
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      await new Promise(r => setTimeout(r, 2000))
+      try { await chrome.scripting.executeScript({ target: { tabId: target.id }, files: XPRESS_XHS_FILES }) } catch {}
+      return await run()
+    }
+    if (/已有发布任务进行中/.test(msg)) {
+      await chrome.tabs.reload(target.id)
+      await waitTabCompleteX(target.id)
+      await new Promise(r => setTimeout(r, 2000))
+      return await run()
+    }
+    throw e
+  }
+}
+
+// 知乎圈子想法多图发布（payload: {title, text, images[], topics[]}）
+async function dispatchZhihuPin(action, payload) {
+  let tabs = await chrome.tabs.query({ url: ['https://www.zhihu.com/*', 'https://*.zhihu.com/*'] })
+  tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
+  let target = tabs.find(t => /\/ring\//.test(t.url ?? '')) ?? null
+  if (!target?.id) {
+    target = await chrome.tabs.create({ url: XPRESS_RING_URL, active: true })
+    if (!target?.id) throw Object.assign(new Error('无法打开知乎圈子页'), { code: -32002 })
+    await waitTabCompleteX(target.id)
+    // 等 content script 就绪（轮询 check_login，只读）
+    const t1 = Date.now()
+    for (;;) {
+      try {
+        await chrome.tabs.sendMessage(target.id, { type: 'xpress-zhihu', action: 'check_login', payload: {} })
+        break
+      } catch {
+        if (Date.now() - t1 > 25000) break
+        await new Promise(r => setTimeout(r, 1000))
+      }
+    }
+    await new Promise(r => setTimeout(r, 3000))
+  }
+  try { await chrome.tabs.update(target.id, { active: true }) } catch {}
+  await new Promise(r => setTimeout(r, 800))
+  const run = async () => {
+    const res = await chrome.tabs.sendMessage(target.id, { type: 'xpress-zhihu', action, payload })
+    if (res?.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
+    if (res === undefined) throw Object.assign(new Error('知乎页面未响应，请刷新后重试'), { code: -32002 })
+    return res?.result ?? res ?? {}
+  }
+  try {
+    return await run()
+  } catch (e) {
+    if (/message channel closed|Receiving end does not exist|Could not establish connection/.test(e.message ?? '')) {
+      try { await chrome.scripting.executeScript({ target: { tabId: target.id }, files: XPRESS_ZHIHU_FILES }) } catch {}
+      await new Promise(r => setTimeout(r, 1000))
+      return await run()
+    }
+    if (/已有任务进行中|已有发布任务进行中/.test(e.message ?? '')) {
+      await chrome.tabs.reload(target.id)
+      await waitTabCompleteX(target.id)
+      await new Promise(r => setTimeout(r, 2500))
+      return await run()
+    }
+    throw e
+  }
+}
+
+// xpress 内容脚本的 CDP 请求（真实点击/输入/穿透 shadow）与进度日志
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type === 'xpress-log') {
+    pageAgentLog(String(msg.step ?? ''), String(msg.detail ?? '')).catch(() => {})
+    return
+  }
+  if (msg?.type !== 'xpress-cdp-click' && msg?.type !== 'xpress-cdp-text' && msg?.type !== 'xpress-cdp-shadow') return
+  ;(async () => {
+    let attached = false
+    const tabId = sender.tab?.id
+    try {
+      if (!tabId) throw new Error('无标签页上下文')
+      await chrome.debugger.attach({ tabId }, '1.3')
+      attached = true
+      if (msg.type === 'xpress-cdp-text') {
+        const enterDown = { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
+        const enterUp = { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
+        const lines = String(msg.text ?? '').split('\n')
+        for (let i = 0; i < lines.length; i++) {
+          if (i > 0) {
+            await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', enterDown)
+            await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', enterUp)
+            await new Promise(r => setTimeout(r, 150))
+          }
+          const line = lines[i]
+          if (line) {
+            await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: line })
+            await new Promise(r => setTimeout(r, 80))
+          }
+        }
+        sendResponse({ ok: true, lines: lines.length })
+      } else if (msg.type === 'xpress-cdp-click') {
+        const press = { type: 'mousePressed', x: msg.x, y: msg.y, button: 'left', clickCount: 1 }
+        const release = { type: 'mouseReleased', x: msg.x, y: msg.y, button: 'left', clickCount: 1 }
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', press)
+        await new Promise(r => setTimeout(r, 30))
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', release)
+        sendResponse({ ok: true })
+      } else {
+        const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: -1, pierce: true })
+        const found = []
+        const walk = (node) => {
+          if (!node) return
+          if (node.nodeName === 'BUTTON') found.push(node)
+          for (const c of node.children ?? []) walk(c)
+          for (const sr of node.shadowRoots ?? []) walk(sr)
+          if (node.contentDocument) walk(node.contentDocument)
+        }
+        walk(root)
+        const out = []
+        for (const b of found) {
+          const html = (await chrome.debugger.sendCommand({ tabId }, 'DOM.getOuterHTML', { nodeId: b.nodeId })) ?? ''
+          if (/ce-btn|暂存|发布/.test(html)) {
+            let box = null
+            try {
+              const r = await chrome.debugger.sendCommand({ tabId }, 'DOM.getBoxModel', { nodeId: b.nodeId })
+              const q = r?.model?.border
+              if (q && q.length === 8) {
+                box = { x: (q[0] + q[2] + q[4] + q[6]) / 4, y: (q[1] + q[3] + q[5] + q[7]) / 4 }
+              }
+            } catch {}
+            out.push({ html: html.slice(0, 140), x: box?.x, y: box?.y })
+          }
+        }
+        sendResponse({ ok: true, buttons: out })
+      }
+    } catch (e) {
+      sendResponse({ error: e.message ?? String(e) })
+    } finally {
+      if (attached) { try { await chrome.debugger.detach({ tabId }) } catch {} }
+    }
+  })()
+  return true
+})
+

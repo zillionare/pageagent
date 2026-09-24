@@ -83,6 +83,29 @@
         "bundles/content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.xiaohongshu.com/*",
+        "https://creator.xiaohongshu.com/*"
+      ],
+      "js": [
+        "content/xpress-common.js",
+        "content/xpress-xhs-actions.js",
+        "content/xpress-xhs-publish.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.zhihu.com/*"
+      ],
+      "js": [
+        "content/xpress-common.js",
+        "content/xpress-zhihu-actions.js",
+        "content/xpress-zhihu-pin.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "icons": {

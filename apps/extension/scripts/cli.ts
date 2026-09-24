@@ -102,6 +102,11 @@ const copyResources = async () => {
       from: path.resolve(rootDir, '../../packages/core/src/platforms'),
       to: path.join(rootDir, 'dist/bundles/platforms'),
     },
+    {
+      // quantclaw: xpress 多图发布内容脚本（小红书/知乎）
+      from: path.join(rootDir, 'src/xpress'),
+      to: path.join(rootDir, 'dist/content'),
+    },
   ]
 
   for (const entry of copyEntries) {
