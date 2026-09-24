@@ -259,73 +259,76 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
   }
 }
 
-// 微信公众号封面：拖拽图片到封面区 → 裁剪框点确定 → 等封面生效
+// 微信公众号封面：往隐藏 input[type=file] 直塞文件（触发它自己的上传→裁剪框）→ 点确认 → 等生效
 function wechatSetCoverByDrop(coverUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
     const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const realDialog = () => {
+      const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+      return hit.length ? hit[hit.length - 1] : null
+    }
     const dbg = {}
     try {
-      const area = document.querySelector('#js_cover_area')
-      if (!area) return { ok: false, err: 'no-cover-area' }
       const resp = await fetch(coverUrl)
       if (!resp.ok) return { ok: false, err: 'fetch ' + resp.status }
       const blob = await resp.blob()
       const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0]
       const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
-      const dt = new DataTransfer()
-      dt.items.add(file)
-      // 单目标拖拽（子节点冒泡覆盖祖先监听；多目标会导致图标连闪）
-      const target = document.querySelector('.cover_drop_inner_wrp') || document.querySelector('.select-cover_outer_drop') || area
-      for (const type of ['dragenter', 'dragover', 'drop']) {
-        target.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
-        await sleep(150)
-      }
-      // 等裁剪框出现：拖拽后出现的任一可见 dialog 即视为封面处理弹窗
-      const dlgSel = '.weui-desktop-dialog, [role="dialog"], [class*="crop" i], [class*="dialog" i]'
+      // 候选 input：accept 含 bmp 的优先（封面控件的特征），其余兜底逐个试
+      const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+      const ordered = [
+        ...inputs.filter(i => /bmp/i.test(i.accept || '')),
+        ...inputs.filter(i => !(/bmp/i.test(i.accept || '')) && /image/i.test(i.accept || '')),
+      ]
+      dbg.inputCount = inputs.length
       let dlg = null
-      const t1 = Date.now()
-      while (Date.now() - t1 < 12000) {
-        const cands = Array.from(document.querySelectorAll(dlgSel)).filter(d => vis(d))
-        if (cands.length) { dlg = cands[cands.length - 1]; break }
-        await sleep(500)
+      const tried = []
+      for (const inp of ordered) {
+        const dt = new DataTransfer()
+        dt.items.add(file)
+        try { inp.files = dt.files } catch {}
+        inp.dispatchEvent(new Event('change', { bubbles: true }))
+        inp.dispatchEvent(new Event('input', { bubbles: true }))
+        await sleep(1500)
+        dlg = realDialog()
+        tried.push({ accept: String(inp.accept || '').slice(0, 40), dlg: !!dlg })
+        if (dlg) break
       }
-      dbg.dlgCls = dlg ? String(dlg.className).slice(0, 70) : null
+      dbg.tried = tried
       let crop = null
       if (dlg) {
-        // 优先底部主按钮（确认），否则文案匹配
         const findOk = () => {
           const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary')
             || dlg.querySelector('.weui-desktop-btn_primary')
-          if (prim && vis(prim)) return prim
-          return Array.from(dlg.querySelectorAll('button, a, [class*="btn" i]'))
-            .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && vis(b))
+          if (prim && vis(prim) && !prim.disabled) return prim
+          return Array.from(dlg.querySelectorAll('button')).filter(vis)
+            .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && !b.disabled)
         }
         let okBtn = null
         const t2 = Date.now()
         while (Date.now() - t2 < 10000) {
           okBtn = findOk()
-          if (okBtn && !okBtn.disabled && !/disabled/.test(String(okBtn.className || ''))) break
-          await sleep(500)
+          if (okBtn) break
+          await sleep(400)
         }
         if (okBtn) {
           crop = { clicked: (okBtn.textContent || '').trim().slice(0, 8) }
           okBtn.click()
-          await sleep(1500)
+          await sleep(2000)
         } else {
-          crop = { err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button, [class*="btn" i]')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 10)).slice(0, 10) }
+          crop = { err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 10) }
         }
       } else {
-        crop = { err: 'no-crop-dialog' }
+        crop = { err: 'no-dialog-after-file' }
       }
-      // 等封面预览出现（背景图/display 变化）
+      // 等封面预览出现（背景图含 url( 且非空 / 或 img）
       const t0 = Date.now()
       while (Date.now() - t0 < 30000) {
         const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
         if (prev && vis(prev)) {
           const bg = (prev.style && prev.style.backgroundImage) || ''
-          if (bg && bg !== 'none' && !bg.includes('url(\"\")')) return { ok: true, via: 'preview-bg', crop, dbg }
-          if (prev.style.display && prev.style.display !== 'none') return { ok: true, via: 'preview-shown', crop, dbg }
+          if (/url\(/.test(bg) && !/url\(["']{2}\)/.test(bg) && !/url\(\)/.test(bg)) return { ok: true, via: 'preview-bg', crop, dbg }
           const img = prev.querySelector('img')
           if (img && img.src) return { ok: true, via: 'preview-img', crop, dbg }
         }

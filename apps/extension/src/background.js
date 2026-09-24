@@ -4197,6 +4197,7 @@ async function handleBridgeRequest(method, params) {
 // 探测微信公众号封面临近 DOM（quantclaw 诊断）：找编辑 tab → 点封面入口 → 返回弹窗结构
 async function bridgeWechatCoverProbe(params) {
   if (params.dropUrl) return await probeWechatCoverDrop(params)
+  if (params.findText) return await probeWechatFindText(params)
   const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
@@ -4299,6 +4300,46 @@ async function probeWechatCoverDrop(params) {
       return out
     },
     args: [String(params.dropUrl)],
+    world: 'MAIN',
+  })
+  return result ?? {}
+}
+
+// 探测：按文案找元素（如「原文链接」）并列出邻近输入框（quantclaw 诊断）
+async function probeWechatFindText(params) {
+  const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
+  const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
+  if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: editorTab.id },
+    func: (needle) => {
+      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const out = { needle, hits: [], inputsNear: [] }
+      const els = Array.from(document.querySelectorAll('div, span, label, a, button, p, dt, th'))
+        .filter(el => (el.textContent || '').trim().includes(needle) && (el.textContent || '').trim().length < 40)
+        .slice(0, 12)
+      out.hits = els.map(el => ({ tag: el.tagName, cls: String(el.className).slice(0, 70), text: (el.textContent || '').trim().slice(0, 30), vis: vis(el) }))
+      // 邻近输入框：从命中元素往上找 5 层容器，收集其中 input/textarea
+      const seen = new Set()
+      for (const el of els) {
+        let ctx = el
+        for (let i = 0; i < 5 && ctx; i++) {
+          for (const inp of ctx.querySelectorAll('input, textarea')) {
+            if (seen.has(inp)) continue
+            seen.add(inp)
+            out.inputsNear.push({
+              tag: inp.tagName, type: inp.type, cls: String(inp.className).slice(0, 70),
+              ph: (inp.placeholder || '').slice(0, 40), name: inp.name || '', vis: vis(inp),
+              inHit: i === 0,
+            })
+          }
+          ctx = ctx.parentElement
+        }
+      }
+      out.inputsNear = out.inputsNear.slice(0, 20)
+      return out
+    },
+    args: [String(params.findText)],
     world: 'MAIN',
   })
   return result ?? {}
