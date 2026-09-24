@@ -4188,7 +4188,57 @@ async function handleBridgeRequest(method, params) {
   if (method === 'crawl_article') {
     return await bridgeCrawlArticle(params ?? {})
   }
+  if (method === 'wechat_cover_probe') {
+    return await bridgeWechatCoverProbe(params ?? {})
+  }
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
+}
+
+// 探测微信公众号封面临近 DOM（quantclaw 诊断）：找编辑 tab → 点封面入口 → 返回弹窗结构
+async function bridgeWechatCoverProbe(params) {
+  const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
+  const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
+  if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
+  if (params.activate) { try { await chrome.tabs.update(editorTab.id, { active: true }) } catch {} }
+  await new Promise(r => setTimeout(r, 1200))
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: editorTab.id },
+    func: (clickIt) => {
+      const sleep = ms => new Promise(r => setTimeout(r, ms))
+      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const out = { href: location.href }
+      const covEls = Array.from(document.querySelectorAll('button, div, span, a, label'))
+        .filter(el => vis(el) && /^(设置)?封面|封面$/.test((el.textContent ?? '').trim())
+          && (el.textContent ?? '').trim().length <= 10)
+        .slice(0, 15)
+        .map(el => ({ tag: el.tagName, cls: (el.className ?? '').toString().slice(0, 60), text: (el.textContent ?? '').trim().slice(0, 20), aria: el.getAttribute('aria-label') }))
+      out.coverCandidates = covEls
+      const btn = Array.from(document.querySelectorAll('button, [role="button"], .cover-item, [class*="cover" i]'))
+        .find(el => vis(el) && /(设置)?封面/.test((el.textContent ?? '').trim()))
+      out.clickTarget = btn ? { tag: btn.tagName, cls: (btn.className ?? '').toString().slice(0, 60), text: (btn.textContent ?? '').trim().slice(0, 20) } : null
+      return (async () => {
+        if (clickIt && btn) {
+          btn.click()
+          await sleep(1500)
+          const dlgs = Array.from(document.querySelectorAll('[role="dialog"], .d-modal, [class*="dialog" i], [class*="modal" i], [class*="popup" i]'))
+            .filter(vis).slice(0, 6)
+          out.dialogs = dlgs.map(d => ({
+            cls: (d.className ?? '').toString().slice(0, 70),
+            text: (d.textContent ?? '').trim().slice(0, 80),
+            html: d.innerHTML.slice(0, 700),
+          }))
+          out.fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).map(i => ({ accept: i.accept, cls: (i.className ?? '').toString().slice(0, 50) }))
+          out.tabTexts = Array.from(document.querySelectorAll('[role="tab"], [class*="tab" i]')).filter(vis).map(t => (t.textContent ?? '').trim().slice(0, 20)).slice(0, 12)
+          out.buttons = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(vis).map(b => (b.textContent ?? '').trim().slice(0, 16)).slice(0, 15)
+          out.allButtons = Array.from(document.querySelectorAll('button')).filter(vis).map(b => (b.textContent ?? '').trim().slice(0, 12)).slice(0, 40)
+        }
+        return out
+      })()
+    },
+    args: [params.click !== false],
+    world: 'MAIN',
+  })
+  return result ?? {}
 }
 
 // 抓取当前 tab（或指定 URL 新开 tab）正文，转 markdown 回传
