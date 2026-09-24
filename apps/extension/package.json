@@ -1,7 +1,7 @@
 {
-  "name": "cose-extension",
-  "version": "1.3.6",
-  "description": "Create Once, Sync Everywhere. 一键将文章同步到多个平台",
+  "name": "pageagent",
+  "version": "1.4.0",
+  "description": "PageAgent - 多平台文章同步与抓取（quantclaw fork自doocs/cose）",
   "type": "module",
   "scripts": {
     "dev": "mkdir -p /tmp/chrome-debug-profile && web-ext run --source-dir ./dist --target=chromium --chromium-binary \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --chromium-profile /tmp/chrome-debug-profile --keep-profile-changes",

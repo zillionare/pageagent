@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "COSE - 多平台文章同步",
-  "description": "Create Once, Sync Everywhere. 一键将文章同步到多个平台",
+  "name": "PageAgent - 多平台文章同步",
+  "description": "PageAgent - 多平台文章同步与抓取（quantclaw）",
   "permissions": [
     "tabGroups",
     "activeTab",
@@ -72,8 +72,13 @@
   },
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["bundles/content.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "bundles/content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
@@ -84,8 +89,13 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["bundles/inject.js", "bundles/platforms/*.js"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "bundles/inject.js",
+        "bundles/platforms/*.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }
