@@ -54,6 +54,7 @@ class PageAgentBridgeClient {
         await this._connectOnce()
       } catch (e) {
         console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥连接失败`, e.message)
+        this._markDisconnected()
       }
       this.connected = false
       await new Promise(r => setTimeout(r, this.occupant ? 15000 : 5000))
@@ -61,6 +62,7 @@ class PageAgentBridgeClient {
   }
   async _connectOnce() {
     const url = this.forceTakeover ? this.base + '/connect?force=1' : this.base + '/connect'
+    this._markDisconnected()
     const resp = await fetch(url, { method: 'POST' })
     if (resp.status === 409) {
       let occupant = '?'
@@ -77,6 +79,7 @@ class PageAgentBridgeClient {
     this.forceTakeover = false
     this.occupant = null
     try { await chrome.storage.sync.remove(['pageagent_occupant', 'pageagent_occupied_at']) } catch {}
+    try { await chrome.storage.sync.set({ pageagent_connected: true }) } catch {}
     this.connected = true
     console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥已连接`, this.base)
     const reader = resp.body.getReader()
@@ -94,6 +97,9 @@ class PageAgentBridgeClient {
       }
     }
     throw new Error('stream ended')
+  }
+  async _markDisconnected() {
+    try { await chrome.storage.sync.set({ pageagent_connected: false }) } catch {}
   }
   _handle(line) {
     let msg
