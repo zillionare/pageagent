@@ -516,7 +516,14 @@ async function handleMessage(request, sender) {
       pageAgentLog(String(request.step ?? ''), String(request.detail ?? '')).catch(() => {})
       return { ok: true }
     case 'pageagent-bridge-changed':
-      try { if (pageAgentBridge) { await pageAgentBridge.reconnect(request.base); return { ok: true } } } catch (e) { return { ok: false, error: String(e?.message ?? e) } }
+      try {
+        if (pageAgentBridge) {
+          await pageAgentBridge.reconnect(request.base)
+          return { ok: true }
+        }
+      } catch (e) {
+        return { ok: false, error: String(e?.message ?? e) }
+      }
       return { ok: false, error: 'bridge not ready' }
     default:
       return { error: 'Unknown message type' }
@@ -879,11 +886,15 @@ async function syncToPlatform(platformId, content) {
       let mdContent = content.markdown || ''
       if (/\$\$|(?<!\$)\$[^$\n]{1,120}\$/.test(mdContent)) {
         try {
-          const _bb2 = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787', pageagent_cf: '' })
+          const _bb2 = await chrome.storage.sync.get({
+            pageagent_bridge: 'http://192.168.0.102:8787',
+            pageagent_cf: '',
+          })
           let cfBase = String(_bb2.pageagent_cf || '').trim()
           if (!cfBase) {
             cfBase = String(_bb2.pageagent_bridge || 'http://192.168.0.102:8787')
-              .replace(/:\d+/, ':8765').replace(/\/$/, '')
+              .replace(/:\d+/, ':8765')
+              .replace(/\/$/, '')
           }
           cfBase = cfBase.replace(/\/$/, '')
           const r = await fetch(cfBase + '/api/formula/replace-md', {
@@ -895,7 +906,10 @@ async function syncToPlatform(platformId, content) {
             const j = await r.json().catch(() => null)
             if (j?.success && j.count) {
               mdContent = j.markdown
-              pageAgentLog('xhs-formula', `count=${j.count}, total=${j.total}, errs=${(j.errors ?? []).length}`)
+              pageAgentLog(
+                'xhs-formula',
+                `count=${j.count}, total=${j.total}, errs=${(j.errors ?? []).length}`
+              )
             }
           }
         } catch (e) {
@@ -903,7 +917,12 @@ async function syncToPlatform(platformId, content) {
         }
       }
       const htmlContent = content.wechatHtml || content.body
-      console.log('[COSE] 小红书 markdown 长度:', mdContent.length, 'HTML 长度:', htmlContent?.length || 0)
+      console.log(
+        '[COSE] 小红书 markdown 长度:',
+        mdContent.length,
+        'HTML 长度:',
+        htmlContent?.length || 0
+      )
 
       // 填充标题和内容
       const fillResult = await chrome.scripting.executeScript({
@@ -973,21 +992,29 @@ async function syncToPlatform(platformId, content) {
             const importRes = { tried: false, ok: false }
             if (useMd) {
               importRes.tried = true
-              const menuItems = Array.from(document.querySelectorAll('.menu-items-container button.menu-item'))
-                .filter(el => el.getBoundingClientRect().width > 0)
+              const menuItems = Array.from(
+                document.querySelectorAll('.menu-items-container button.menu-item')
+              ).filter(el => el.getBoundingClientRect().width > 0)
               const importBtn = menuItems[menuItems.length - 1] ?? null
               if (importBtn) {
                 importBtn.click()
                 await new Promise(r => setTimeout(r, 1500))
                 const modal = document.querySelector('.import-from-file-modal')
                 if (modal) {
-                  const upArea = modal.querySelector('.upload-area') || modal.querySelector('.d-modal-content')
+                  const upArea =
+                    modal.querySelector('.upload-area') || modal.querySelector('.d-modal-content')
                   if (upArea) {
                     const mdFile = new File([pasteBody], 'article.md', { type: 'text/markdown' })
                     const dtDrop = new DataTransfer()
                     dtDrop.items.add(mdFile)
                     for (const type of ['dragenter', 'dragover', 'drop']) {
-                      upArea.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dtDrop }))
+                      upArea.dispatchEvent(
+                        new DragEvent(type, {
+                          bubbles: true,
+                          cancelable: true,
+                          dataTransfer: dtDrop,
+                        })
+                      )
                       await new Promise(r => setTimeout(r, 150))
                     }
                     importRes.dropped = true
@@ -1002,16 +1029,24 @@ async function syncToPlatform(platformId, content) {
                     importRes.modalClosed = !document.querySelector('.import-from-file-modal')
                     importRes.editorLen = contentEditor?.textContent?.length ?? 0
                     importRes.ok = true
-                  } else { importRes.err = 'no-upload-area' }
+                  } else {
+                    importRes.err = 'no-upload-area'
+                  }
                 } else {
                   importRes.err = 'no-import-modal'
                   const m = document.querySelector('.d-modal')
-                  importRes.dlgHtml = m ? m.outerHTML.slice(0, 300) : document.body.innerHTML.slice(-300)
+                  importRes.dlgHtml = m
+                    ? m.outerHTML.slice(0, 300)
+                    : document.body.innerHTML.slice(-300)
                 }
-              } else { importRes.err = 'no-import-btn' }
+              } else {
+                importRes.err = 'no-import-btn'
+              }
             }
             // 导入成功则跳过文本粘贴；失败才降级粘贴
-            const mdImgCount = useMd ? [...pasteBody.matchAll(/!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/g)].length : 0
+            const mdImgCount = useMd
+              ? [...pasteBody.matchAll(/!\[[^\]]*\]\(https?:\/\/[^)\s]+\)/g)].length
+              : 0
             if (!importRes.ok && contentEditor && (pasteBody || htmlBody)) {
               contentEditor.focus()
 
@@ -1040,9 +1075,11 @@ async function syncToPlatform(platformId, content) {
               })
 
               contentEditor.dispatchEvent(pasteEvent)
-              console.log('[COSE] 小红书内容已通过 paste 事件注入（' + (useMd ? 'markdown' : 'html') + '）')
+              console.log(
+                '[COSE] 小红书内容已通过 paste 事件注入（' + (useMd ? 'markdown' : 'html') + '）'
+              )
               await new Promise(r => setTimeout(r, 500 + (mdImgCount ? 0 : 0)))
-              const wordCount2 = (contentEditor.textContent?.length ?? 0)
+              const wordCount2 = contentEditor.textContent?.length ?? 0
               if (wordCount2 === 0 && !useMd) {
                 console.log('[COSE] paste 事件未生效，尝试备用方案')
                 contentEditor.innerHTML = htmlBody
@@ -1059,9 +1096,14 @@ async function syncToPlatform(platformId, content) {
             }
             if (contentEditor) {
               const imgCount = contentEditor.querySelectorAll('img').length
-              return { success: true, method: useMd ? (importRes.ok ? 'import-drag' : 'paste-markdown') : 'paste-html',
+              return {
+                success: true,
+                method: useMd ? (importRes.ok ? 'import-drag' : 'paste-markdown') : 'paste-html',
                 length: (pasteBody || htmlBody).length,
-                expectImgs: mdImgCount, gotImgs: imgCount, import: importRes }
+                expectImgs: mdImgCount,
+                gotImgs: imgCount,
+                import: importRes,
+              }
             }
 
             return { success: false, error: 'Content editor not found' }
@@ -1083,10 +1125,17 @@ async function syncToPlatform(platformId, content) {
       const _imgBits = _fr.expectImgs ? `（图${_fr.gotImgs ?? 0}/${_fr.expectImgs}）` : ''
       try {
         const _bb = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787' })
-        await fetch((_bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '') + '/log', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ step: '[pageagent] xhs-done', detail: JSON.stringify(_fr).slice(0, 3000) }),
-        })
+        await fetch(
+          (_bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '') + '/log',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              step: '[pageagent] xhs-done',
+              detail: JSON.stringify(_fr).slice(0, 3000),
+            }),
+          }
+        )
       } catch {}
       return { success: true, message: '已同步到小红书' + _imgBits, tabId: tab.id }
     } else if (platformId === 'twitter') {
@@ -4170,29 +4219,39 @@ async function pageAgentLog(step, detail = '') {
 // 桥地址存 chrome.storage.sync（popup 可改，Chrome 可跑在任意机器）
 let pageAgentBridge = null
 try {
-  ensurePageAgentBridge(handleBridgeRequest).then((c) => {
-    pageAgentBridge = c
-    ensurePageAgentAlarm()
-    console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥客户端就绪`)
-  }).catch((e) => {
-    console.log('[PageAgent] 桥初始化失败', e?.message ?? e)
-  })
+  ensurePageAgentBridge(handleBridgeRequest)
+    .then(c => {
+      pageAgentBridge = c
+      ensurePageAgentAlarm()
+      console.log(`[PageAgent v${chrome.runtime.getManifest().version}] 桥客户端就绪`)
+    })
+    .catch(e => {
+      console.log('[PageAgent] 桥初始化失败', e?.message ?? e)
+    })
 } catch (e) {
   console.log('[PageAgent] 桥初始化异常', e?.message ?? e)
 }
 // MV3 keepalive：SW 空闲 ~30s 被冻结导致断桥；alarm 周期唤醒重连（对齐旧 xpress 行为）
 function ensurePageAgentAlarm() {
-  try { chrome.alarms.create('pageagent-bridge', { periodInMinutes: 0.5 }) } catch {}
+  try {
+    chrome.alarms.create('pageagent-bridge', { periodInMinutes: 0.5 })
+  } catch {}
 }
 try {
-  chrome.alarms.onAlarm.addListener((alarm) => {
+  chrome.alarms.onAlarm.addListener(alarm => {
     if (alarm.name === 'pageagent-bridge') {
-      try { pageAgentBridge && pageAgentBridge.wake() } catch {}
+      try {
+        pageAgentBridge && pageAgentBridge.wake()
+      } catch {}
     }
   })
 } catch {}
-try { chrome.runtime.onInstalled.addListener(() => ensurePageAgentAlarm()) } catch {}
-try { chrome.runtime.onStartup.addListener(() => ensurePageAgentAlarm()) } catch {}
+try {
+  chrome.runtime.onInstalled.addListener(() => ensurePageAgentAlarm())
+} catch {}
+try {
+  chrome.runtime.onStartup.addListener(() => ensurePageAgentAlarm())
+} catch {}
 
 // popup 改桥地址 → SW 重连（走 handleMessage 的 pageagent-bridge-changed 分支）
 
@@ -4214,6 +4273,7 @@ async function handleBridgeRequest(method, params) {
   if (method === 'probe_zhihu_ring') return await bridgeProbeZhihuRing(params ?? {})
   if (method === 'publish_content') return await dispatchXpress('publish_content', params ?? {})
   if (method === 'publish_ring_pin') return await dispatchZhihuPin('publish_ring_pin', params ?? {})
+  if (method === 'publish_mp_images') return await bridgePublishMpImages(params ?? {})
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
 }
 
@@ -4225,38 +4285,82 @@ async function bridgeWechatCoverProbe(params) {
   const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
-  if (params.activate) { try { await chrome.tabs.update(editorTab.id, { active: true }) } catch {} }
+  if (params.activate) {
+    try {
+      await chrome.tabs.update(editorTab.id, { active: true })
+    } catch {}
+  }
   await new Promise(r => setTimeout(r, 1200))
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: editorTab.id },
-    func: (clickIt) => {
+    func: clickIt => {
       const sleep = ms => new Promise(r => setTimeout(r, ms))
-      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const vis = el => {
+        try {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        } catch {
+          return false
+        }
+      }
       const out = { href: location.href }
       const covEls = Array.from(document.querySelectorAll('button, div, span, a, label'))
-        .filter(el => vis(el) && /^(设置)?封面|封面$/.test((el.textContent ?? '').trim())
-          && (el.textContent ?? '').trim().length <= 10)
+        .filter(
+          el =>
+            vis(el) &&
+            /^(设置)?封面|封面$/.test((el.textContent ?? '').trim()) &&
+            (el.textContent ?? '').trim().length <= 10
+        )
         .slice(0, 15)
-        .map(el => ({ tag: el.tagName, cls: (el.className ?? '').toString().slice(0, 60), text: (el.textContent ?? '').trim().slice(0, 20), aria: el.getAttribute('aria-label') }))
+        .map(el => ({
+          tag: el.tagName,
+          cls: (el.className ?? '').toString().slice(0, 60),
+          text: (el.textContent ?? '').trim().slice(0, 20),
+          aria: el.getAttribute('aria-label'),
+        }))
       out.coverCandidates = covEls
-      const btn = Array.from(document.querySelectorAll('button, [role="button"], .cover-item, [class*="cover" i]'))
-        .find(el => vis(el) && /(设置)?封面/.test((el.textContent ?? '').trim()))
-      out.clickTarget = btn ? { tag: btn.tagName, cls: (btn.className ?? '').toString().slice(0, 60), text: (btn.textContent ?? '').trim().slice(0, 20) } : null
+      const btn = Array.from(
+        document.querySelectorAll('button, [role="button"], .cover-item, [class*="cover" i]')
+      ).find(el => vis(el) && /(设置)?封面/.test((el.textContent ?? '').trim()))
+      out.clickTarget = btn
+        ? {
+            tag: btn.tagName,
+            cls: (btn.className ?? '').toString().slice(0, 60),
+            text: (btn.textContent ?? '').trim().slice(0, 20),
+          }
+        : null
       return (async () => {
         if (clickIt && btn) {
           btn.click()
           await sleep(1500)
-          const dlgs = Array.from(document.querySelectorAll('[role="dialog"], .d-modal, [class*="dialog" i], [class*="modal" i], [class*="popup" i]'))
-            .filter(vis).slice(0, 6)
+          const dlgs = Array.from(
+            document.querySelectorAll(
+              '[role="dialog"], .d-modal, [class*="dialog" i], [class*="modal" i], [class*="popup" i]'
+            )
+          )
+            .filter(vis)
+            .slice(0, 6)
           out.dialogs = dlgs.map(d => ({
             cls: (d.className ?? '').toString().slice(0, 70),
             text: (d.textContent ?? '').trim().slice(0, 80),
             html: d.innerHTML.slice(0, 700),
           }))
-          out.fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).map(i => ({ accept: i.accept, cls: (i.className ?? '').toString().slice(0, 50) }))
-          out.tabTexts = Array.from(document.querySelectorAll('[role="tab"], [class*="tab" i]')).filter(vis).map(t => (t.textContent ?? '').trim().slice(0, 20)).slice(0, 12)
-          out.buttons = Array.from(document.querySelectorAll('[role="dialog"] button')).filter(vis).map(b => (b.textContent ?? '').trim().slice(0, 16)).slice(0, 15)
-          out.allButtons = Array.from(document.querySelectorAll('button')).filter(vis).map(b => (b.textContent ?? '').trim().slice(0, 12)).slice(0, 40)
+          out.fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).map(i => ({
+            accept: i.accept,
+            cls: (i.className ?? '').toString().slice(0, 50),
+          }))
+          out.tabTexts = Array.from(document.querySelectorAll('[role="tab"], [class*="tab" i]'))
+            .filter(vis)
+            .map(t => (t.textContent ?? '').trim().slice(0, 20))
+            .slice(0, 12)
+          out.buttons = Array.from(document.querySelectorAll('[role="dialog"] button'))
+            .filter(vis)
+            .map(b => (b.textContent ?? '').trim().slice(0, 16))
+            .slice(0, 15)
+          out.allButtons = Array.from(document.querySelectorAll('button'))
+            .filter(vis)
+            .map(b => (b.textContent ?? '').trim().slice(0, 12))
+            .slice(0, 40)
         }
         return out
       })()
@@ -4272,15 +4376,26 @@ async function probeWechatCoverDrop(params) {
   const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
-  try { await chrome.tabs.update(editorTab.id, { active: true }) } catch {}
+  try {
+    await chrome.tabs.update(editorTab.id, { active: true })
+  } catch {}
   await new Promise(r => setTimeout(r, 800))
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: editorTab.id },
-    func: async (dropUrl) => {
+    func: async dropUrl => {
       const sleep = ms => new Promise(r => setTimeout(r, ms))
-      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+      const vis = el => {
+        try {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        } catch {
+          return false
+        }
+      }
       const realDialog = () => {
-        const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+        const hit = Array.from(
+          document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')
+        ).filter(vis)
         return hit.length ? hit[hit.length - 1] : null
       }
       const out = { tried: [] }
@@ -4288,7 +4403,9 @@ async function probeWechatCoverDrop(params) {
       try {
         const resp = await fetch(dropUrl)
         blob = await resp.blob()
-      } catch (e) { return { err: 'fetch: ' + String(e?.message ?? e) } }
+      } catch (e) {
+        return { err: 'fetch: ' + String(e?.message ?? e) }
+      }
       const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0]
       const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
       const targets = [
@@ -4301,26 +4418,42 @@ async function probeWechatCoverDrop(params) {
       ]
       for (const [name, sel] of targets) {
         const el = document.querySelector(sel)
-        if (!el) { out.tried.push({ name, skip: 'not-found' }); continue }
+        if (!el) {
+          out.tried.push({ name, skip: 'not-found' })
+          continue
+        }
         const dt = new DataTransfer()
         dt.items.add(file)
         for (const type of ['dragenter', 'dragover', 'drop']) {
-          el.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }))
+          el.dispatchEvent(
+            new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt })
+          )
           await sleep(120)
         }
         await sleep(1300)
         const d = realDialog()
-        out.tried.push({ name, dialog: d ? String(d.className).slice(0, 70) : null,
-          dlgText: d ? (d.textContent || '').trim().slice(0, 60) : null })
+        out.tried.push({
+          name,
+          dialog: d ? String(d.className).slice(0, 70) : null,
+          dlgText: d ? (d.textContent || '').trim().slice(0, 60) : null,
+        })
         if (d) {
           out.hit = name
-          out.dialogButtons = Array.from(d.querySelectorAll('button')).filter(vis)
-            .map(b => ({ t: (b.textContent || '').trim().slice(0, 10), cls: String(b.className).slice(0, 70) })).slice(0, 10)
+          out.dialogButtons = Array.from(d.querySelectorAll('button'))
+            .filter(vis)
+            .map(b => ({
+              t: (b.textContent || '').trim().slice(0, 10),
+              cls: String(b.className).slice(0, 70),
+            }))
+            .slice(0, 10)
           break
         }
       }
-      out.fileInputs = Array.from(document.querySelectorAll('input[type="file"]'))
-        .map(i => ({ accept: i.accept, cls: String(i.className).slice(0, 50), vis: vis(i) }))
+      out.fileInputs = Array.from(document.querySelectorAll('input[type="file"]')).map(i => ({
+        accept: i.accept,
+        cls: String(i.className).slice(0, 50),
+        vis: vis(i),
+      }))
       return out
     },
     args: [String(params.dropUrl)],
@@ -4336,13 +4469,29 @@ async function probeWechatFindText(params) {
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: editorTab.id },
-    func: (needle) => {
-      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    func: needle => {
+      const vis = el => {
+        try {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        } catch {
+          return false
+        }
+      }
       const out = { needle, hits: [], inputsNear: [] }
       const els = Array.from(document.querySelectorAll('div, span, label, a, button, p, dt, th'))
-        .filter(el => (el.textContent || '').trim().includes(needle) && (el.textContent || '').trim().length < 40)
+        .filter(
+          el =>
+            (el.textContent || '').trim().includes(needle) &&
+            (el.textContent || '').trim().length < 40
+        )
         .slice(0, 12)
-      out.hits = els.map(el => ({ tag: el.tagName, cls: String(el.className).slice(0, 70), text: (el.textContent || '').trim().slice(0, 30), vis: vis(el) }))
+      out.hits = els.map(el => ({
+        tag: el.tagName,
+        cls: String(el.className).slice(0, 70),
+        text: (el.textContent || '').trim().slice(0, 30),
+        vis: vis(el),
+      }))
       // 邻近输入框：从命中元素往上找 5 层容器，收集其中 input/textarea
       const seen = new Set()
       for (const el of els) {
@@ -4352,8 +4501,12 @@ async function probeWechatFindText(params) {
             if (seen.has(inp)) continue
             seen.add(inp)
             out.inputsNear.push({
-              tag: inp.tagName, type: inp.type, cls: String(inp.className).slice(0, 70),
-              ph: (inp.placeholder || '').slice(0, 40), name: inp.name || '', vis: vis(inp),
+              tag: inp.tagName,
+              type: inp.type,
+              cls: String(inp.className).slice(0, 70),
+              ph: (inp.placeholder || '').slice(0, 40),
+              name: inp.name || '',
+              vis: vis(inp),
               inHit: i === 0,
             })
           }
@@ -4362,8 +4515,19 @@ async function probeWechatFindText(params) {
       }
       out.inputsNear = out.inputsNear.slice(0, 20)
       out.allUrlInputs = Array.from(document.querySelectorAll('input, textarea'))
-        .filter(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
-        .map(i => ({ tag: i.tagName, type: i.type, name: i.name, cls: String(i.className).slice(0, 50), ph: (i.placeholder || '').slice(0, 30), vis: vis(i) }))
+        .filter(i =>
+          /url|source|链接|原文/i.test(
+            (i.name || '') + String(i.className || '') + (i.placeholder || '')
+          )
+        )
+        .map(i => ({
+          tag: i.tagName,
+          type: i.type,
+          name: i.name,
+          cls: String(i.className).slice(0, 50),
+          ph: (i.placeholder || '').slice(0, 30),
+          vis: vis(i),
+        }))
         .slice(0, 15)
       const hit0 = els.filter(vis)[0]
       if (hit0) {
@@ -4384,27 +4548,59 @@ async function probeWechatSourceUrl(params) {
   const tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   const editorTab = tabs.find(t => /appmsg.*edit|appmsg.*action=edit/i.test(t.url ?? '')) ?? tabs[0]
   if (!editorTab?.id) throw Object.assign(new Error('未找到公众号编辑页 tab'), { code: -32002 })
-  try { await chrome.tabs.update(editorTab.id, { active: true }) } catch {}
+  try {
+    await chrome.tabs.update(editorTab.id, { active: true })
+  } catch {}
   await new Promise(r => setTimeout(r, 800))
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: editorTab.id },
     func: async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms))
-      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-      const snap = (label) => {
-        const dlgs = Array.from(document.querySelectorAll('.weui-desktop-dialog, .weui-desktop-dialog_wrp, [role="dialog"], [class*="dialog" i]')).filter(vis)
+      const vis = el => {
+        try {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        } catch {
+          return false
+        }
+      }
+      const snap = label => {
+        const dlgs = Array.from(
+          document.querySelectorAll(
+            '.weui-desktop-dialog, .weui-desktop-dialog_wrp, [role="dialog"], [class*="dialog" i]'
+          )
+        ).filter(vis)
         const urlIns = Array.from(document.querySelectorAll('input, textarea'))
-          .filter(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
-          .map(i => ({ type: i.type, name: i.name, cls: String(i.className).slice(0, 50), vis: vis(i), val: String(i.value || '').slice(0, 30) }))
+          .filter(i =>
+            /url|source|链接|原文/i.test(
+              (i.name || '') + String(i.className || '') + (i.placeholder || '')
+            )
+          )
+          .map(i => ({
+            type: i.type,
+            name: i.name,
+            cls: String(i.className).slice(0, 50),
+            vis: vis(i),
+            val: String(i.value || '').slice(0, 30),
+          }))
         return {
           step: label,
-          dlgs: dlgs.slice(0, 4).map(d => ({ cls: String(d.className).slice(0, 70), text: (d.textContent || '').trim().slice(0, 60), html: d.innerHTML.slice(0, 700) })),
+          dlgs: dlgs
+            .slice(0, 4)
+            .map(d => ({
+              cls: String(d.className).slice(0, 70),
+              text: (d.textContent || '').trim().slice(0, 60),
+              html: d.innerHTML.slice(0, 700),
+            })),
           urlIns,
         }
       }
-      const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+      const area =
+        document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
       if (!area) return { err: 'no-url-area' }
-      try { area.scrollIntoView({ block: 'center' }) } catch {}
+      try {
+        area.scrollIntoView({ block: 'center' })
+      } catch {}
       await sleep(400)
       const out = { steps: [snap('before')] }
       const seq = [
@@ -4413,8 +4609,13 @@ async function probeWechatSourceUrl(params) {
         ['checkbox', area.querySelector('input[name="source_url_checked"]')],
       ]
       for (const [name, el] of seq) {
-        if (!el) { out.steps.push({ step: name, skip: 'not-found' }); continue }
-        try { el.click() } catch {}
+        if (!el) {
+          out.steps.push({ step: name, skip: 'not-found' })
+          continue
+        }
+        try {
+          el.click()
+        } catch {}
         await sleep(2000)
         out.steps.push(snap('after-' + name))
       }
@@ -4455,7 +4656,9 @@ async function bridgeCrawlArticle(params) {
       func: () => {
         // Readability 风格抽取：找最大文本块容器
         const pick = () => {
-          const cands = Array.from(document.querySelectorAll('article, main, [role="main"], .content, .post, .article'))
+          const cands = Array.from(
+            document.querySelectorAll('article, main, [role="main"], .content, .post, .article')
+          )
           if (cands.length) {
             cands.sort((a, b) => (b.textContent?.length ?? 0) - (a.textContent?.length ?? 0))
             return cands[0]
@@ -4465,7 +4668,7 @@ async function bridgeCrawlArticle(params) {
         const root = pick()
         // 粗转 markdown：h1-h3/p/li/img/a/code
         const lines = []
-        const walk = (el) => {
+        const walk = el => {
           for (const n of el.childNodes) {
             if (n.nodeType === 3) {
               const t = (n.textContent ?? '').replace(/\s+/g, ' ').trim()
@@ -4473,10 +4676,12 @@ async function bridgeCrawlArticle(params) {
             } else if (n.nodeType !== 1) continue
             const tag = n.tagName.toLowerCase()
             if (/^(script|style|nav|header|footer|aside|form|button)$/.test(tag)) continue
-            if (/^h([1-3])$/.test(tag)) lines.push('#'.repeat(Number(tag[1])) + ' ' + (n.textContent ?? '').trim())
+            if (/^h([1-3])$/.test(tag))
+              lines.push('#'.repeat(Number(tag[1])) + ' ' + (n.textContent ?? '').trim())
             else if (tag === 'li') lines.push('- ' + (n.textContent ?? '').trim())
             else if (tag === 'img' && n.src) lines.push(`![](${n.src})`)
-            else if (tag === 'a' && n.href) lines.push(`[${(n.textContent ?? '').trim()}](${n.href})`)
+            else if (tag === 'a' && n.href)
+              lines.push(`[${(n.textContent ?? '').trim()}](${n.href})`)
             else if (tag === 'pre') lines.push('```\n' + (n.textContent ?? '').trim() + '\n```')
             else walk(n)
           }
@@ -4492,13 +4697,25 @@ async function bridgeCrawlArticle(params) {
     })
     return { ...result, chars: result?.markdown?.length ?? 0 }
   } finally {
-    if (created && tabId) { try { await chrome.tabs.remove(tabId) } catch {} }
+    if (created && tabId) {
+      try {
+        await chrome.tabs.remove(tabId)
+      } catch {}
+    }
   }
 }
 
 // ===== quantclaw: xpress 多图发布移植（小红书图文 / 知乎圈子想法）=====
-const XPRESS_XHS_FILES = ['content/xpress-common.js', 'content/xpress-xhs-actions.js', 'content/xpress-xhs-publish.js']
-const XPRESS_ZHIHU_FILES = ['content/xpress-common.js', 'content/xpress-zhihu-actions.js', 'content/xpress-zhihu-pin.js']
+const XPRESS_XHS_FILES = [
+  'content/xpress-common.js',
+  'content/xpress-xhs-actions.js',
+  'content/xpress-xhs-publish.js',
+]
+const XPRESS_ZHIHU_FILES = [
+  'content/xpress-common.js',
+  'content/xpress-zhihu-actions.js',
+  'content/xpress-zhihu-pin.js',
+]
 const XPRESS_RING_URL = 'https://www.zhihu.com/ring/host/1940469824917603882?tab=new'
 
 async function waitTabCompleteX(tabId, timeout = 45000) {
@@ -4521,25 +4738,53 @@ async function bridgeProbeZhihuRing(params) {
     target = await chrome.tabs.create({ url: RING, active: true })
     await new Promise(r => setTimeout(r, 8000))
   } else {
-    try { await chrome.tabs.update(target.id, { active: true }) } catch {}
+    try {
+      await chrome.tabs.update(target.id, { active: true })
+    } catch {}
     await new Promise(r => setTimeout(r, 1500))
   }
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: target.id },
     func: () => {
-      const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-      const out = { href: location.href, title: document.title, loggedIn: !/signin|login/i.test(location.href) }
+      const vis = el => {
+        try {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.height > 0
+        } catch {
+          return false
+        }
+      }
+      const out = {
+        href: location.href,
+        title: document.title,
+        loggedIn: !/signin|login/i.test(location.href),
+      }
       const els = Array.from(document.querySelectorAll('button, div, a, span'))
         .filter(el => (el.textContent || '').includes('发想法'))
         .slice(0, 10)
       out.candidates = els.map(el => {
         const r = el.getBoundingClientRect()
-        return { tag: el.tagName, cls: String(el.className).slice(0, 90), text: (el.textContent || '').trim().slice(0, 24), vis: vis(el),
-          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } }
+        return {
+          tag: el.tagName,
+          cls: String(el.className).slice(0, 90),
+          text: (el.textContent || '').trim().slice(0, 24),
+          vis: vis(el),
+          rect: {
+            x: Math.round(r.x),
+            y: Math.round(r.y),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+          },
+        }
       })
-      out.buttonsSample = Array.from(document.querySelectorAll('button')).filter(vis).slice(0, 25).map(b => (b.textContent || '').trim().slice(0, 14))
+      out.buttonsSample = Array.from(document.querySelectorAll('button'))
+        .filter(vis)
+        .slice(0, 25)
+        .map(b => (b.textContent || '').trim().slice(0, 14))
       out.bodyLen = (document.body.textContent || '').length
-      out.hasEditor = !!document.querySelector('.public-DraftEditor-content, [contenteditable="true"]')
+      out.hasEditor = !!document.querySelector(
+        '.public-DraftEditor-content, [contenteditable="true"]'
+      )
       return out
     },
     world: 'MAIN',
@@ -4548,28 +4793,455 @@ async function bridgeProbeZhihuRing(params) {
 }
 
 // 小红书图文多图发布（payload: {title, content, images[], tags[], mode}）
+// ===== 微信公众号「图片消息」发布（quantclaw）：CF loop 任务调用 =====
+// 流程：取 token → 打开 type=77 图片消息编辑器 → 填标题 → 上传分页多图 → 保存草稿（绝不点发表）
+// params: { title, images: [dataURL], desc?, probeOnly? }
+
+// —— 页面主世界函数（executeScript 序列化，禁止引用外部作用域）——
+function mpImagesEnv() {
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const brief = el => ({
+    tag: el.tagName,
+    cls: String(el.className || '').slice(0, 90),
+    text: (el.textContent || '').trim().slice(0, 30),
+    vis: vis(el),
+  })
+  return {
+    href: location.href,
+    titleInputs: Array.from(
+      document.querySelectorAll(
+        '#title, textarea[placeholder*="标题"], input[placeholder*="标题"], .title-editor__input .ProseMirror'
+      )
+    ).map(brief),
+    fileInputs: Array.from(document.querySelectorAll('input[type=file]')).map(el => ({
+      accept: el.accept,
+      multiple: !!el.multiple,
+      cls: String(el.className || '').slice(0, 80),
+      vis: vis(el),
+    })),
+    uploadCands: Array.from(
+      document.querySelectorAll(
+        'button, a, div[class*="upload" i], div[class*="add" i], span[class*="upload" i]'
+      )
+    )
+      .filter(vis)
+      .map(brief)
+      .filter(o => o.text || /upload|add/i.test(o.cls))
+      .slice(0, 40),
+    prosemirror: Array.from(document.querySelectorAll('.ProseMirror')).map(el => ({
+      cls: String(el.className || '').slice(0, 60),
+      len: (el.textContent || '').length,
+      vis: vis(el),
+    })),
+    bodyHead: (document.body.innerText || '').slice(0, 300),
+  }
+}
+
+function mpImagesFillTitle(title) {
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  let titleEditor =
+    Array.from(document.querySelectorAll('.title-editor__input .ProseMirror')).find(vis) || null
+  let titleInput =
+    Array.from(
+      document.querySelectorAll('#title, textarea[placeholder*="标题"], input[placeholder*="标题"]')
+    ).find(vis) || null
+  if (!titleEditor && !titleInput) return { ok: false, error: '未找到标题输入' }
+  if (titleEditor) {
+    titleEditor.focus()
+    titleEditor.textContent = title
+    titleEditor.dispatchEvent(new Event('input', { bubbles: true }))
+    titleEditor.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  if (titleInput) {
+    titleInput.focus()
+    const proto =
+      titleInput.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+    if (setter) setter.call(titleInput, title)
+    else titleInput.value = title
+    titleInput.dispatchEvent(new Event('input', { bubbles: true }))
+    titleInput.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  const ok =
+    (titleInput && titleInput.value === title) ||
+    (titleEditor && (titleEditor.textContent || '').trim() === title)
+  return { ok: !!ok, viaEditor: !!titleEditor, viaInput: !!titleInput }
+}
+
+function mpImagesCount() {
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const imgs = Array.from(document.querySelectorAll('img'))
+    .filter(vis)
+    .filter(
+      el =>
+        ((el.src || '').startsWith('http') || (el.src || '').startsWith('blob:')) &&
+        (el.naturalWidth || 0) > 60
+    )
+  const cards = Array.from(
+    document.querySelectorAll(
+      '[class*="img" i], [class*="pic" i], [class*="upload" i], [class*="image" i]'
+    )
+  ).filter(vis)
+  return {
+    imgCount: imgs.length,
+    srcHeads: imgs.slice(0, 24).map(el => String(el.src || '').slice(0, 50)),
+    cardCount: cards.length,
+    textTail: (document.body.innerText || '').slice(-240),
+  }
+}
+
+function mpImagesSaveDraft() {
+  return (async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms))
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
+    const btn = Array.from(document.querySelectorAll('button, a, div[role="button"]')).find(
+      b => (b.textContent || '').trim().includes('保存为草稿') && vis(b)
+    )
+    if (!btn) return { success: false, error: '未找到保存为草稿按钮' }
+    try {
+      btn.click()
+    } catch {}
+    const t0 = Date.now()
+    while (Date.now() - t0 < 15000) {
+      const nodes = Array.from(
+        document.querySelectorAll(
+          '[class*="toast" i], [class*="tips" i], .weui-desktop-toast, [class*="message" i]'
+        )
+      )
+      const hit = nodes.find(
+        n => vis(n) && /保存成功|已保存|草稿保存成功/.test(n.textContent || '')
+      )
+      if (hit) return { success: true, via: 'toast' }
+      await sleep(700)
+    }
+    return { success: false, error: '保存提示未出现（可能仍在保存）' }
+  })()
+}
+
+async function bridgePublishMpImages(params) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const dbg = {}
+  const images = Array.isArray(params.images)
+    ? params.images.filter(s => typeof s === 'string' && s.startsWith('data:'))
+    : []
+  const title = String(params.title || '').trim()
+  const desc = String(params.desc || '').trim()
+
+  // 1. 找/开公众号后台 tab
+  let tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
+  tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+  let target = tabs[0]
+  if (!target || !target.id) {
+    target = await chrome.tabs.create({ url: 'https://mp.weixin.qq.com/', active: true })
+    if (!target || !target.id)
+      throw Object.assign(new Error('无法打开公众号后台：请先登录 mp.weixin.qq.com'), {
+        code: -32002,
+      })
+    await waitForTab(target.id)
+  }
+  try {
+    await chrome.tabs.update(target.id, { active: true })
+  } catch {}
+  const tabId = target.id
+
+  // 2. token
+  const [{ result: token }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const m = location.href.match(/token=(\d+)/)
+      if (m) return m[1]
+      for (const a of document.querySelectorAll('a[href*="token"]')) {
+        const mm = a.href.match(/token=(\d+)/)
+        if (mm) return mm[1]
+      }
+      for (const s of document.querySelectorAll('script:not([src])')) {
+        const mm = (s.textContent || '').match(/token["']?\s*[:=]\s*["']?(\d+)["']?/i)
+        if (mm) return mm[1]
+      }
+      return null
+    },
+    world: 'MAIN',
+  })
+  if (!token)
+    throw Object.assign(new Error('未获取到公众号 token：请确认浏览器已登录 mp.weixin.qq.com'), {
+      code: -32002,
+    })
+  dbg.tokenTail = String(token).slice(-4)
+
+  // 3. 打开图片消息编辑器（type=77）
+  const editorUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=77&createType=0&token=${token}&lang=zh_CN`
+  await chrome.tabs.update(tabId, { url: editorUrl })
+  await waitForTab(tabId)
+  await sleep(2500)
+
+  const runInPage = async (fn, args) => {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: fn,
+      args: args || [],
+      world: 'MAIN',
+    })
+    return r ? r.result : null
+  }
+
+  // 4. 环境探测
+  dbg.env = await runInPage(mpImagesEnv)
+  if (params.probeOnly) return { ok: true, probeOnly: true, env: dbg.env }
+
+  // 5. 标题
+  if (title) dbg.title = await runInPage(mpImagesFillTitle, [title])
+
+  // 6. 上传图片：dataURL → chrome.downloads 落盘 → CDP setFileInputFiles
+  if (images.length) {
+    const paths = []
+    for (let i = 0; i < images.length; i++) {
+      try {
+        const dlId = await chrome.downloads.download({
+          url: images[i],
+          filename: `cf-mp-${Date.now()}-${i}.png`,
+          saveAs: false,
+        })
+        const t0 = Date.now()
+        for (;;) {
+          const [it] = await chrome.downloads.search({ id: dlId })
+          if (it && it.state === 'complete' && it.filename) {
+            paths.push(it.filename)
+            break
+          }
+          if (it && (it.state === 'interrupted' || it.error)) throw new Error(it.error || it.state)
+          if (Date.now() - t0 > 25000) throw new Error('下载超时')
+          await sleep(300)
+        }
+      } catch (e) {
+        dbg[`dl${i}Err`] = String((e && e.message) || e).slice(0, 120)
+      }
+    }
+    dbg.dlCount = paths.length
+    if (paths.length) {
+      try {
+        await chrome.debugger.attach({ tabId }, '1.3')
+        try {
+          await chrome.debugger.sendCommand({ tabId }, 'DOM.enable')
+          await chrome.debugger.sendCommand({ tabId }, 'Page.enable')
+          const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: 1 })
+          const q = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+            nodeId: doc.root.nodeId,
+            selector: 'input[type=file]',
+          })
+          dbg.inputNodeId = (q && q.nodeId) || 0
+          if (q && q.nodeId) {
+            await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+              files: paths,
+              nodeId: q.nodeId,
+            })
+            dbg.via = 'setFileInputFiles'
+          } else {
+            // 无 file input：点上传区 + 拦文件选择器
+            const pt =
+              dbg.env &&
+              dbg.env.uploadCands &&
+              dbg.env.uploadCands.find(c => c.vis && (c.text || '').length)
+            dbg.uploadPt = pt || null
+            await chrome.debugger.sendCommand({ tabId }, 'Page.setInterceptFileChooserDialog', {
+              enabled: true,
+            })
+            let chooser = null
+            const onEvent = (source, method, ev) => {
+              if (source.tabId === tabId && method === 'Page.fileChooserOpened') chooser = ev
+            }
+            chrome.debugger.onEvent.addListener(onEvent)
+            try {
+              const [{ result: rect }] = await chrome.scripting.executeScript({
+                target: { tabId },
+                func: () => {
+                  const vis = el => {
+                    try {
+                      const r = el.getBoundingClientRect()
+                      return r.width > 0 && r.height > 0
+                    } catch {
+                      return false
+                    }
+                  }
+                  const cands = Array.from(
+                    document.querySelectorAll(
+                      'button, div[class*="upload" i], div[class*="add" i], span[class*="upload" i]'
+                    )
+                  ).filter(vis)
+                  const el =
+                    cands.find(e => /上传|选择图片|图片/.test((e.textContent || '').trim())) ||
+                    cands[0]
+                  if (!el) return null
+                  el.scrollIntoView({ block: 'center' })
+                  const r = el.getBoundingClientRect()
+                  return {
+                    x: Math.round(r.left + r.width / 2),
+                    y: Math.round(r.top + r.height / 2),
+                  }
+                },
+                world: 'MAIN',
+              })
+              if (rect) {
+                for (const type of ['mousePressed', 'mouseReleased']) {
+                  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+                    type,
+                    x: rect.x,
+                    y: rect.y,
+                    button: 'left',
+                    clickCount: 1,
+                  })
+                  await sleep(90)
+                }
+              }
+              const t1 = Date.now()
+              while (Date.now() - t1 < 5000 && !chooser) await sleep(200)
+              if (chooser) {
+                await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+                  files: paths,
+                  backendNodeId: chooser.backendNodeId,
+                })
+                dbg.via = 'chooser'
+              } else {
+                dbg.chooserMiss = true
+              }
+            } finally {
+              try {
+                chrome.debugger.onEvent.removeListener(onEvent)
+              } catch {}
+            }
+          }
+        } finally {
+          try {
+            await chrome.debugger.detach({ tabId })
+          } catch {}
+        }
+      } catch (e) {
+        dbg.cdpErr = String((e && e.message) || e).slice(0, 200)
+      }
+    }
+    // 等上传完成（图片卡出现）
+    const t2 = Date.now()
+    let count = null
+    while (Date.now() - t2 < 30000) {
+      await sleep(1200)
+      count = await runInPage(mpImagesCount)
+      if (count && count.imgCount >= paths.length) break
+    }
+    dbg.afterUpload = count
+  }
+
+  // 7. 描述（可选字段，找不到就跳过）
+  if (desc) {
+    try {
+      dbg.desc = await runInPage(
+        d => {
+          const vis = el => {
+            try {
+              const r = el.getBoundingClientRect()
+              return r.width > 0 && r.height > 0
+            } catch {
+              return false
+            }
+          }
+          const el = Array.from(
+            document.querySelectorAll(
+              'textarea[placeholder*="描述"], #js_description, textarea.js_desc'
+            )
+          ).find(vis)
+          if (!el) return { ok: false, error: 'no-desc-field' }
+          const proto = window.HTMLTextAreaElement.prototype
+          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
+          if (setter) setter.call(el, d)
+          else el.value = d
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+          return { ok: true }
+        },
+        [desc]
+      )
+    } catch (e) {
+      dbg.descErr = String((e && e.message) || e).slice(0, 120)
+    }
+  }
+
+  // 8. 保存草稿
+  await sleep(600)
+  dbg.save = await runInPage(mpImagesSaveDraft)
+
+  const ok = !!(dbg.save && dbg.save.success)
+  return {
+    ok,
+    drafted: ok,
+    titleFilled: !!(dbg.title && dbg.title.ok),
+    uploaded: (dbg.afterUpload && dbg.afterUpload.imgCount) || 0,
+    message: ok
+      ? '公众号图片消息已保存为草稿，请人工发表'
+      : (dbg.save && dbg.save.error) || '保存草稿失败',
+    dbg,
+  }
+}
+
 async function dispatchXpress(action, payload) {
-  let tabs = await chrome.tabs.query({ url: ['https://www.xiaohongshu.com/*', 'https://creator.xiaohongshu.com/*'] })
+  let tabs = await chrome.tabs.query({
+    url: ['https://www.xiaohongshu.com/*', 'https://creator.xiaohongshu.com/*'],
+  })
   tabs.sort((a, b) => (b.lastAccessed ?? 0) - (a.lastAccessed ?? 0))
   let target = tabs[0] ?? null
   if (!target?.id) {
-    target = await chrome.tabs.create({ url: 'https://creator.xiaohongshu.com/publish/publish?source=official&target=image' })
+    target = await chrome.tabs.create({
+      url: 'https://creator.xiaohongshu.com/publish/publish?source=official&target=image',
+    })
     if (!target?.id) throw Object.assign(new Error('无法打开小红书发布页'), { code: -32002 })
     await waitTabCompleteX(target.id)
     await new Promise(r => setTimeout(r, 2000))
   }
-  try { await chrome.tabs.update(target.id, { active: true }) } catch {}
+  try {
+    await chrome.tabs.update(target.id, { active: true })
+  } catch {}
   const run = async () => {
     const res = await chrome.tabs.sendMessage(target.id, { type: 'xpress', action, payload })
     if (res?.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
-    if (res === undefined) throw Object.assign(new Error('页面未响应，请刷新小红书页面后重试'), { code: -32002 })
+    if (res === undefined)
+      throw Object.assign(new Error('页面未响应，请刷新小红书页面后重试'), { code: -32002 })
     return res?.result ?? res ?? {}
   }
   try {
     return await run()
   } catch (e) {
     const msg = e.message ?? ''
-    if (/message channel|message port|Receiving end does not exist|Could not establish connection|back\/forward cache/.test(msg)) {
+    if (
+      /message channel|message port|Receiving end does not exist|Could not establish connection|back\/forward cache/.test(
+        msg
+      )
+    ) {
       const t0 = Date.now()
       for (;;) {
         const t = await chrome.tabs.get(target.id).catch(() => null)
@@ -4579,7 +5251,12 @@ async function dispatchXpress(action, payload) {
         await new Promise(r => setTimeout(r, 1000))
       }
       await new Promise(r => setTimeout(r, 2000))
-      try { await chrome.scripting.executeScript({ target: { tabId: target.id }, files: XPRESS_XHS_FILES }) } catch {}
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: target.id },
+          files: XPRESS_XHS_FILES,
+        })
+      } catch {}
       return await run()
     }
     if (/已有发布任务进行中/.test(msg)) {
@@ -4605,7 +5282,11 @@ async function dispatchZhihuPin(action, payload) {
     const t1 = Date.now()
     for (;;) {
       try {
-        await chrome.tabs.sendMessage(target.id, { type: 'xpress-zhihu', action: 'check_login', payload: {} })
+        await chrome.tabs.sendMessage(target.id, {
+          type: 'xpress-zhihu',
+          action: 'check_login',
+          payload: {},
+        })
         break
       } catch {
         if (Date.now() - t1 > 25000) break
@@ -4614,19 +5295,31 @@ async function dispatchZhihuPin(action, payload) {
     }
     await new Promise(r => setTimeout(r, 3000))
   }
-  try { await chrome.tabs.update(target.id, { active: true }) } catch {}
+  try {
+    await chrome.tabs.update(target.id, { active: true })
+  } catch {}
   await new Promise(r => setTimeout(r, 800))
   const run = async () => {
     const res = await chrome.tabs.sendMessage(target.id, { type: 'xpress-zhihu', action, payload })
     if (res?.error) throw Object.assign(new Error(res.error.message), { code: res.error.code })
-    if (res === undefined) throw Object.assign(new Error('知乎页面未响应，请刷新后重试'), { code: -32002 })
+    if (res === undefined)
+      throw Object.assign(new Error('知乎页面未响应，请刷新后重试'), { code: -32002 })
     return res?.result ?? res ?? {}
   }
   try {
     return await run()
   } catch (e) {
-    if (/message channel|Receiving end does not exist|Could not establish connection|back\/forward cache/.test(e.message ?? '')) {
-      try { await chrome.scripting.executeScript({ target: { tabId: target.id }, files: XPRESS_ZHIHU_FILES }) } catch {}
+    if (
+      /message channel|Receiving end does not exist|Could not establish connection|back\/forward cache/.test(
+        e.message ?? ''
+      )
+    ) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: target.id },
+          files: XPRESS_ZHIHU_FILES,
+        })
+      } catch {}
       await new Promise(r => setTimeout(r, 1000))
       return await run()
     }
@@ -4649,8 +5342,20 @@ async function xpressCdpHandle(msg, sender) {
     await chrome.debugger.attach({ tabId }, '1.3')
     attached = true
     if (msg.type === 'xpress-cdp-text') {
-      const enterDown = { type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
-      const enterUp = { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 }
+      const enterDown = {
+        type: 'rawKeyDown',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13,
+      }
+      const enterUp = {
+        type: 'keyUp',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13,
+        nativeVirtualKeyCode: 13,
+      }
       const lines = String(msg.text ?? '').split('\n')
       for (let i = 0; i < lines.length; i++) {
         if (i > 0) {
@@ -4675,9 +5380,12 @@ async function xpressCdpHandle(msg, sender) {
       return { ok: true }
     }
     // xpress-cdp-shadow：穿透 closed shadow 查询按钮真实坐标
-    const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: -1, pierce: true })
+    const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
+      depth: -1,
+      pierce: true,
+    })
     const found = []
-    const walk = (node) => {
+    const walk = node => {
       if (!node) return
       if (node.nodeName === 'BUTTON') found.push(node)
       for (const c of node.children ?? []) walk(c)
@@ -4687,11 +5395,15 @@ async function xpressCdpHandle(msg, sender) {
     walk(root)
     const out = []
     for (const b of found) {
-      const html = (await chrome.debugger.sendCommand({ tabId }, 'DOM.getOuterHTML', { nodeId: b.nodeId })) ?? ''
+      const html =
+        (await chrome.debugger.sendCommand({ tabId }, 'DOM.getOuterHTML', { nodeId: b.nodeId })) ??
+        ''
       if (/ce-btn|暂存|发布/.test(html)) {
         let box = null
         try {
-          const r = await chrome.debugger.sendCommand({ tabId }, 'DOM.getBoxModel', { nodeId: b.nodeId })
+          const r = await chrome.debugger.sendCommand({ tabId }, 'DOM.getBoxModel', {
+            nodeId: b.nodeId,
+          })
           const q = r?.model?.border
           if (q && q.length === 8) {
             box = { x: (q[0] + q[2] + q[4] + q[6]) / 4, y: (q[1] + q[3] + q[5] + q[7]) / 4 }
@@ -4704,6 +5416,10 @@ async function xpressCdpHandle(msg, sender) {
   } catch (e) {
     return { error: e.message ?? String(e) }
   } finally {
-    if (attached) { try { await chrome.debugger.detach({ tabId }) } catch {} }
+    if (attached) {
+      try {
+        await chrome.debugger.detach({ tabId })
+      } catch {}
+    }
   }
 }
