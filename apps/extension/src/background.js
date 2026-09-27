@@ -5458,6 +5458,7 @@ function mpExtractJobs() {
     /\/jobs?\/([\w-]{6,})\/?(?:$|[?#])/,
     /\/jobs?\/(\d{4,})\/?(?:$|[?#])/,
     /\/careers\/details\/([\w%\-]+)\/?(?:$|[?#])/,
+    /index\/position\/(\d+)\/detail/,
     /\/jobs?\?[^#]*id=(\d+)/,
   ]
   const anchors = Array.from(document.querySelectorAll('a[href]')).slice(0, 3000)
