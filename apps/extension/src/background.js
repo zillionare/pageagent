@@ -5457,22 +5457,38 @@ function mpExtractJobs() {
     /\/jobs?\/[\w%\-]+-([0-9]{4,})\/?(?:$|[?#])/,
     /\/jobs?\/([\w-]{6,})\/?(?:$|[?#])/,
     /\/jobs?\/(\d{4,})\/?(?:$|[?#])/,
+    /\/careers\/details\/([\w%\-]+)\/?(?:$|[?#])/,
     /\/jobs?\?[^#]*id=(\d+)/,
   ]
   const anchors = Array.from(document.querySelectorAll('a[href]')).slice(0, 3000)
   for (const a of anchors) {
     const href = a.href || ''
     let m = null
-    for (const re of patterns) {
-      m = href.match(re)
-      if (m) break
+    let loc = ''
+    if (href.includes('/join-us/jobs/')) {
+      const parts = href.split('/join-us/jobs/')[1].split(/[?#]/)[0].split('/').filter(Boolean)
+      if (parts.length >= 2) {
+        m = [href, parts[parts.length - 1]]
+        loc = parts.length >= 3 ? parts[parts.length - 2] : ''
+      }
+    }
+    if (!m) {
+      for (const re of patterns) {
+        m = href.match(re)
+        if (m) break
+      }
     }
     const title = norm(a.textContent || a.getAttribute('title') || '')
     if (!m || !title || title.length > 160) continue
     const id = m[1]
     if (seen.has(id)) continue
     seen.add(id)
-    out.jobs.push({ job_id: id, title: title, url: href })
+    out.jobs.push({
+      job_id: id,
+      title: title,
+      url: href,
+      location: loc ? loc.replace(/-/g, ' ') : '',
+    })
   }
   if (!out.jobs.length) {
     out.samples = anchors
@@ -5967,7 +5983,24 @@ async function bridgeProbePage(params) {
     func: mpPageProbe,
     world: 'MAIN',
   })
-  return r ? r.result : null
+  const out = r ? r.result : null
+  try {
+    const [e] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: mpExtractJobs,
+      world: 'MAIN',
+    })
+    if (out && e && e.result) {
+      out.extract = {
+        jobsCount: (e.result.jobs || []).length,
+        jobs: (e.result.jobs || []).slice(0, 8),
+        samples: (e.result.samples || []).slice(0, 12),
+      }
+    }
+  } catch (e2) {
+    if (out) out.extractErr = String((e2 && e2.message) || e2).slice(0, 160)
+  }
+  return out
 }
 
 async function dispatchXpress(action, payload) {
