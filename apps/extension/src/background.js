@@ -5379,6 +5379,17 @@ async function bridgePublishMpImages(params) {
 
 // ===== 招聘页岗位提取（quantclaw）：mokahr 等 SPA/WAF 站点 =====
 // 在真实浏览器开 tab（自动过 WAF JS 挑战）→ 等渲染 → 抓岗位锚点。
+function mpAutoScroll() {
+  try {
+    const h = document.body.scrollHeight || 0
+    const y = window.scrollY || 0
+    window.scrollTo(0, Math.min(h, y + Math.max(600, Math.round(window.innerHeight * 0.9))))
+    return { y, h }
+  } catch (e) {
+    return {}
+  }
+}
+
 function mpFindCategoryCards() {
   const out = {
     cards: [],
@@ -5403,6 +5414,27 @@ function mpFindCategoryCards() {
       cls: String(el.className || '').slice(0, 70),
     })
   }
+  // 子导航类别链接（如 /experienced-roles/quant-research）：href 更深一层、短文本
+  try {
+    const cur = location.pathname.replace(/\/$/, '')
+    const esc = cur.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const deepRe = new RegExp('^' + esc + '/[\\w%-]+/?$')
+    const seenHref = new Set()
+    for (const a of Array.from(document.querySelectorAll('a[href]')).slice(0, 2000)) {
+      let u = null
+      try {
+        u = new URL(a.href)
+      } catch (e) {
+        continue
+      }
+      if (u.host !== location.host) continue
+      if (!deepRe.test(u.pathname)) continue
+      const t = (a.textContent || '').replace(/\s+/g, ' ').trim()
+      if (!t || t.length > 40 || seenHref.has(u.pathname)) continue
+      seenHref.add(u.pathname)
+      out.cards.push({ label: t, count: 0, href: u.href, cls: 'subnav' })
+    }
+  } catch (e) {}
   return out
 }
 
@@ -5423,6 +5455,8 @@ function mpExtractJobs() {
     /gh_jid=(\d+)/,
     /\/jobs?\/[\w%\-]+-([0-9]{4,})\/?(?:$|[?#])/,
     /\/jobs?\/([\w-]{6,})\/?(?:$|[?#])/,
+    /\/jobs?\/(\d{4,})\/?(?:$|[?#])/,
+    /\/jobs?\?[^#]*id=(\d+)/,
   ]
   const anchors = Array.from(document.querySelectorAll('a[href]')).slice(0, 3000)
   for (const a of anchors) {
@@ -5433,7 +5467,7 @@ function mpExtractJobs() {
       if (m) break
     }
     const title = norm(a.textContent || a.getAttribute('title') || '')
-    if (!m || !title || title.length > 120) continue
+    if (!m || !title || title.length > 160) continue
     const id = m[1]
     if (seen.has(id)) continue
     seen.add(id)
@@ -5515,7 +5549,10 @@ async function bridgeExtractJobs(params) {
   // A) 等渲染后直接找岗位锚点
   const t0 = Date.now()
   let direct = null
-  while (Date.now() - t0 < 25000) {
+  while (Date.now() - t0 < 30000) {
+    try {
+      await runInPage(mpAutoScroll)
+    } catch (e) {}
     direct = await runInPage(mpExtractJobs)
     if (direct && direct.jobs && direct.jobs.length) return { ...direct, mode: 'direct' }
     await sleep(2000)
@@ -5535,13 +5572,25 @@ async function bridgeExtractJobs(params) {
   const cardsList = (cards && cards.cards) || []
   const cap = params.maxCategories && params.maxCategories > 0 ? params.maxCategories : 50
   for (const card of cardsList.slice(0, cap)) {
-    if (!card.x || !card.y) continue
+    if (!card.href && (!card.x || !card.y)) continue
     try {
-      await clickAt(card.x, card.y)
+      if (card.href) {
+        await chrome.tabs.update(tabId, { url: card.href })
+        await waitForTab(tabId)
+        await sleep(1200)
+      } else {
+        await clickAt(card.x, card.y)
+        await sleep(1800)
+      }
     } catch (e) {
       continue
     }
-    await sleep(1800)
+    for (let s = 0; s < 4; s++) {
+      try {
+        await runInPage(mpAutoScroll)
+      } catch (e) {}
+      await sleep(400)
+    }
     const r = await runInPage(mpExtractJobs)
     const jobs = (r && r.jobs) || []
     const added = []
@@ -5562,10 +5611,12 @@ async function bridgeExtractJobs(params) {
       out.perCategory[out.perCategory.length - 1].samples = (r.samples || []).slice(0, 12)
       out.perCategory[out.perCategory.length - 1].rowCands = (r.debug && r.debug.listCands) || []
     }
-    // 回首页：SAME tab 重新导航（cookies 保留，WAF 不重来）
-    await chrome.tabs.update(tabId, { url })
-    await waitForTab(tabId)
-    await sleep(1500)
+    // 回首页：仅坐标型卡片需要（href 型各自独立）
+    if (!card.href) {
+      await chrome.tabs.update(tabId, { url })
+      await waitForTab(tabId)
+      await sleep(1500)
+    }
   }
   if (!out.jobs.length) out.debug.bodyText = cards && cards.bodyText
   const direct2 = await runInPage(mpExtractJobs)
