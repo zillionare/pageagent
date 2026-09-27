@@ -4913,7 +4913,7 @@ function mpImagesSetDesc(html, text) {
   return { ok: len > 0, len }
 }
 
-async function mpImagesBuildFiles(items) {
+async function mpImagesUploadInput(items) {
   const dt = new DataTransfer()
   const log = []
   for (const it of items) {
@@ -4926,11 +4926,6 @@ async function mpImagesBuildFiles(items) {
       log.push('ERR:' + ((e && e.message) || e))
     }
   }
-  return { dt, log }
-}
-
-async function mpImagesUploadInput(items) {
-  const { dt, log } = await mpImagesBuildFiles(items)
   const input =
     document.querySelector('.js_upload_btn_container input[type=file]') ||
     document.querySelector('input[type=file][multiple]') ||
@@ -4947,7 +4942,18 @@ async function mpImagesUploadInput(items) {
 }
 
 async function mpImagesUploadDrop(items) {
-  const { dt, log } = await mpImagesBuildFiles(items)
+  const dt = new DataTransfer()
+  const log = []
+  for (const it of items) {
+    try {
+      const blob = await (await fetch(it.dataUrl)).blob()
+      const f = new File([blob], it.name || 'page.png', { type: blob.type || 'image/png' })
+      dt.items.add(f)
+      log.push(f.name)
+    } catch (e) {
+      log.push('ERR:' + ((e && e.message) || e))
+    }
+  }
   const zone =
     document.querySelector('.image-selector__add') ||
     document.querySelector('.image-selector') ||
