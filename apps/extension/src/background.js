@@ -5368,6 +5368,33 @@ async function bridgePublishMpImages(params) {
 
 // ===== 招聘页岗位提取（quantclaw）：mokahr 等 SPA/WAF 站点 =====
 // 在真实浏览器开 tab（自动过 WAF JS 挑战）→ 等渲染 → 抓岗位锚点。
+function mpFindCategoryCards() {
+  const out = {
+    cards: [],
+    samples: [],
+    bodyText: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 800),
+  }
+  const els = Array.from(document.querySelectorAll('div, li, a, span, section'))
+  const seen = new Set()
+  for (const el of els) {
+    const t = (el.textContent || '').replace(/\s+/g, '').trim()
+    const m = t.match(/^(.{0,16})共(\d+)个职位$/i)
+    if (!m || seen.has(t)) continue
+    seen.add(t)
+    el.scrollIntoView({ block: 'center' })
+    const r = el.getBoundingClientRect()
+    if (r.width < 20 || r.height < 10) continue
+    out.cards.push({
+      label: m[1] || t,
+      count: parseInt(m[2], 10),
+      x: Math.round(r.left + r.width / 2),
+      y: Math.round(r.top + r.height / 2),
+      cls: String(el.className || '').slice(0, 70),
+    })
+  }
+  return out
+}
+
 function mpExtractJobs() {
   const out = { href: location.href, docTitle: document.title, jobs: [], samples: [], debug: {} }
   const seen = new Set()
@@ -5415,7 +5442,6 @@ async function bridgeExtractJobs(params) {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const url = String(params.url || '').trim()
   if (!url) throw Object.assign(new Error('缺少 url'), { code: -32600 })
-  // 1. 找同域 tab，没有则开新 tab
   let host = ''
   try {
     host = new URL(url).host
@@ -5434,7 +5460,6 @@ async function bridgeExtractJobs(params) {
   try {
     await chrome.tabs.update(tabId, { active: true })
   } catch (e) {}
-
   const runInPage = async (fn, args) => {
     const [r] = await chrome.scripting.executeScript({
       target: { tabId },
@@ -5444,15 +5469,83 @@ async function bridgeExtractJobs(params) {
     })
     return r ? r.result : null
   }
-  // 2. 等渲染/过 WAF：轮询抓取，找到岗位或超时
+  const clickAt = async (x, y) => {
+    try {
+      await chrome.debugger.attach({ tabId }, '1.3')
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+          type,
+          x,
+          y,
+          button: 'left',
+          clickCount: 1,
+        })
+        await sleep(80)
+      }
+    } finally {
+      try {
+        await chrome.debugger.detach({ tabId })
+      } catch (e) {}
+    }
+  }
+
+  // A) 等渲染后直接找岗位锚点
   const t0 = Date.now()
-  let last = null
-  while (Date.now() - t0 < 30000) {
-    last = await runInPage(mpExtractJobs)
-    if (last && last.jobs && last.jobs.length) break
+  let direct = null
+  while (Date.now() - t0 < 25000) {
+    direct = await runInPage(mpExtractJobs)
+    if (direct && direct.jobs && direct.jobs.length) return { ...direct, mode: 'direct' }
     await sleep(2000)
   }
-  return last || { jobs: [], debug: { timeout: true } }
+  // B) 分类卡片驱动：点击每个分类页，逐页提取岗位
+  const out = {
+    href: direct?.href || url,
+    docTitle: direct?.docTitle || '',
+    jobs: [],
+    perCategory: [],
+    debug: {},
+    mode: 'categories',
+  }
+  const seen = new Set()
+  let cards = await runInPage(mpFindCategoryCards)
+  out.debug.cards0 = cards && cards.cards
+  const cardsList = (cards && cards.cards) || []
+  const cap = params.maxCategories && params.maxCategories > 0 ? params.maxCategories : 50
+  for (const card of cardsList.slice(0, cap)) {
+    if (!card.x || !card.y) continue
+    try {
+      await clickAt(card.x, card.y)
+    } catch (e) {
+      continue
+    }
+    await sleep(1800)
+    const r = await runInPage(mpExtractJobs)
+    const jobs = (r && r.jobs) || []
+    const added = []
+    for (const j of jobs) {
+      if (seen.has(j.job_id)) continue
+      seen.add(j.job_id)
+      out.jobs.push(j)
+      added.push(j.title)
+    }
+    out.perCategory.push({
+      label: card.label,
+      count: card.count,
+      found: jobs.length,
+      added: added.length,
+    })
+    // 无岗位时收集诊断
+    if (!jobs.length && r) {
+      out.perCategory[out.perCategory.length - 1].samples = (r.samples || []).slice(0, 12)
+      out.perCategory[out.perCategory.length - 1].rowCands = (r.debug && r.debug.listCands) || []
+    }
+    // 回首页：SAME tab 重新导航（cookies 保留，WAF 不重来）
+    await chrome.tabs.update(tabId, { url })
+    await waitForTab(tabId)
+    await sleep(1500)
+  }
+  if (!out.jobs.length) out.debug.bodyText = cards && cards.bodyText
+  return out
 }
 
 async function dispatchXpress(action, payload) {
