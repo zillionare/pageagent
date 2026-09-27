@@ -5495,6 +5495,165 @@ function mpExtractJobs() {
   return out
 }
 
+// —— SPA/API 通用职位解析（网络 JSON 捕获结果 → 标准 job）——
+function _isJobish(o) {
+  if (!o || typeof o !== 'object') return false
+  return !!(o.title || o.jobTitle || o.name)
+}
+function _findJobArrays(obj, out, depth) {
+  if (depth > 7 || obj == null) return
+  if (Array.isArray(obj)) {
+    if (obj.length && _isJobish(obj[0])) {
+      out.push(obj)
+      return
+    }
+    for (const it of obj) _findJobArrays(it, out, depth + 1)
+    return
+  }
+  if (typeof obj === 'object') {
+    for (const k of Object.keys(obj)) {
+      const v = obj[k]
+      if (Array.isArray(v)) {
+        if (v.length && _isJobish(v[0])) out.push(v)
+        else _findJobArrays(v, out, depth + 1)
+      } else if (typeof v === 'object') {
+        _findJobArrays(v, out, depth + 1)
+      }
+    }
+  }
+}
+function _jobFromItem(o, baseUrl) {
+  const get = keys => {
+    for (const k of keys) {
+      if (o[k] != null && o[k] !== '') return o[k]
+    }
+    return null
+  }
+  let title = get(['title', 'jobTitle', 'positionName', 'name', 'header'])
+  if (!title || typeof title !== 'string') return null
+  title = title
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!title) return null
+  let id = get(['id', 'jobId', 'requisitionId', 'positionId', 'reqId', 'code', 'slug'])
+  if (!id)
+    id = title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .slice(0, 40)
+  let loc = get(['location', 'city', 'region', 'office', 'branch', 'site'])
+  if (Array.isArray(loc))
+    loc = loc
+      .map(x => (typeof x === 'string' ? x : (x && (x.name || x.label || x.city)) || ''))
+      .filter(Boolean)
+      .join(', ')
+  else if (loc && typeof loc === 'object')
+    loc = loc.name || loc.label || loc.city || loc.title || ''
+  let urlv = get(['absolute_url', 'applyUrl', 'url', 'link', 'reference', 'permalink'])
+  if (urlv && typeof urlv === 'string' && !/^https?:/i.test(urlv)) {
+    urlv = baseUrl.split('#')[0].replace(/\/$/, '') + (urlv.startsWith('/') ? urlv : '/' + urlv)
+  }
+  let posted = get([
+    'postingDate',
+    'postedDate',
+    'published_at',
+    'publishedAt',
+    'created_at',
+    'createdAt',
+    'updatedAt',
+  ])
+  if (posted && typeof posted === 'string') {
+    const mm = posted.match(/\d{4}-\d{2}-\d{2}/)
+    posted = (mm && mm[0]) || posted.slice(0, 10)
+  }
+  return {
+    job_id: String(id),
+    title: title.slice(0, 160),
+    url: urlv ? String(urlv) : '',
+    location: loc ? String(loc).slice(0, 80) : '',
+    posted_at: posted ? String(posted) : '',
+  }
+}
+
+async function captureJobJson(tabId, baseUrl) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const isJobPath = u => /job|career|search|position|posting|vacanc|graphql|api/i.test(u || '')
+  const reqs = {}
+  const jobs = []
+  const seen = new Set()
+  try {
+    await chrome.debugger.attach({ tabId }, '1.3')
+    try {
+      await chrome.debugger.sendCommand({ tabId }, 'Network.enable')
+      await chrome.debugger.sendCommand({ tabId }, 'Page.enable')
+    } catch (e) {}
+    const onResp = (source, method, p) => {
+      if (source.tabId !== tabId || method !== 'Network.responseReceived') return
+      const u = (p && p.response && p.response.url) || ''
+      const ct = (p && p.response && p.response.mimeType) || ''
+      if (isJobPath(u) && /json|javascript|text/i.test(ct) && p.requestId) {
+        reqs[p.requestId] = { url: u.slice(0, 160), status: (p.response && p.response.status) || 0 }
+      }
+    }
+    chrome.debugger.onEvent.addListener(onResp)
+    try {
+      await chrome.tabs.reload(tabId)
+    } catch (e2) {}
+    const t0 = Date.now()
+    while (Date.now() - t0 < 20000) {
+      await sleep(1500)
+      const ids = Object.keys(reqs).filter(id => !reqs[id].done)
+      if (!ids.length && Date.now() - t0 > 6000) continue
+      for (const id of ids.slice(0, 12)) {
+        reqs[id].done = true
+        try {
+          const body = await chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', {
+            requestId: id,
+          })
+          const text = (body && body.body) || ''
+          if (!text || text.length > 3000000) continue
+          let obj = null
+          try {
+            obj = JSON.parse(text)
+          } catch (e3) {
+            continue
+          }
+          const arrs = []
+          _findJobArrays(obj, arrs, 0)
+          for (const arr of arrs) {
+            for (const it of arr.slice(0, 300)) {
+              const j = _jobFromItem(it, baseUrl)
+              if (!j) continue
+              const k = j.job_id + '|' + j.title
+              if (seen.has(k)) continue
+              seen.add(k)
+              jobs.push(j)
+            }
+          }
+        } catch (e4) {}
+      }
+      if (jobs.length > 40) break
+    }
+    try {
+      chrome.debugger.onEvent.removeListener(onEvent)
+    } catch (e5) {}
+  } finally {
+    try {
+      await chrome.debugger.detach({ tabId })
+    } catch (e6) {}
+  }
+  return {
+    jobs: jobs.slice(0, 200),
+    meta: {
+      reqs: Object.keys(reqs).length,
+      urls: Object.values(reqs)
+        .map(r => r.url)
+        .slice(0, 8),
+    },
+  }
+}
+
 async function bridgeExtractJobs(params) {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const url = String(params.url || '').trim()
