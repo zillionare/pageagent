@@ -4287,6 +4287,7 @@ async function handleBridgeRequest(method, params) {
   if (method === 'publish_mp_images') return await bridgePublishMpImages(params ?? {})
   if (method === 'extract_jobs') return await bridgeExtractJobs(params ?? {})
   if (method === 'extract_job_detail') return await bridgeExtractJobDetail(params ?? {})
+  if (method === 'probe_page') return await bridgeProbePage(params ?? {})
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
 }
 
@@ -5897,6 +5898,53 @@ async function bridgeExtractJobDetail(params) {
     await sleep(2000)
   }
   return last || { description: '', debug: { timeout: true } }
+}
+
+// ===== 页面资源探测（quantclaw）：渲染后列出 XHR/脚本 URL，用于适配隐藏 API/ATS =====
+function mpPageProbe() {
+  const res = performance
+    .getEntriesByType('resource')
+    .map(e => e.name)
+    .filter(Boolean)
+  const scripts = Array.from(document.querySelectorAll('script[src]')).map(s => s.src)
+  const links = Array.from(document.querySelectorAll('link[href]')).map(l => l.href)
+  return {
+    href: location.href,
+    title: document.title,
+    resources: res.slice(-220),
+    scripts: scripts.slice(0, 80),
+    links: links.slice(0, 80),
+    htmlLen: (document.documentElement.outerHTML || '').length,
+    textHead: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 300),
+  }
+}
+
+async function bridgeProbePage(params) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const url = String(params.url || '').trim()
+  if (!url) throw Object.assign(new Error('缺少 url'), { code: -32600 })
+  let host = ''
+  try {
+    host = new URL(url).host
+  } catch (e) {}
+  const tabs = await chrome.tabs.query({})
+  let target = tabs.find(t => t.url && host && t.url.includes(host))
+  if (!target || !target.id) {
+    target = await chrome.tabs.create({ url, active: true })
+    if (!target || !target.id) throw Object.assign(new Error('无法打开页面'), { code: -32002 })
+  }
+  const tabId = target.id
+  try {
+    await chrome.tabs.update(tabId, { url, active: true })
+  } catch (e) {}
+  await waitForTab(tabId)
+  await sleep(params.waitMs ? Math.min(Number(params.waitMs) || 4000, 20000) : 5000)
+  const [r] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: mpPageProbe,
+    world: 'MAIN',
+  })
+  return r ? r.result : null
 }
 
 async function dispatchXpress(action, payload) {
