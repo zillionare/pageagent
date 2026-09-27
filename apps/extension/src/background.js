@@ -5923,9 +5923,17 @@ function mpPageProbe() {
     .filter(Boolean)
   const scripts = Array.from(document.querySelectorAll('script[src]')).map(s => s.src)
   const links = Array.from(document.querySelectorAll('link[href]')).map(l => l.href)
+  const anchors = Array.from(document.querySelectorAll('a[href]'))
+    .slice(0, 400)
+    .map(a => ({
+      href: (a.href || '').slice(0, 150),
+      text: (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+    }))
+    .filter(x => x.text)
   return {
     href: location.href,
     title: document.title,
+    anchors: anchors,
     resources: res.slice(-220),
     scripts: scripts.slice(0, 80),
     links: links.slice(0, 80),
