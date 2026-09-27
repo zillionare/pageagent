@@ -5996,6 +5996,23 @@ async function bridgeProbePage(params) {
         jobs: (e.result.jobs || []).slice(0, 8),
         samples: (e.result.samples || []).slice(0, 12),
       }
+      try {
+        const [ca] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () =>
+            Array.from(document.querySelectorAll('a[href]'))
+              .map(a => ({
+                href: (a.href || '').slice(0, 130),
+                text: (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 50),
+              }))
+              .filter(x => /careers|job|position|role/i.test(x.href + ' ' + x.text))
+              .slice(0, 20),
+          world: 'MAIN',
+        })
+        out.extract.careersAnchors = (ca && ca.result) || []
+      } catch (e3) {
+        out.extract.careersAnchorsErr = String((e3 && e3.message) || e3).slice(0, 120)
+      }
     }
   } catch (e2) {
     if (out) out.extractErr = String((e2 && e2.message) || e2).slice(0, 160)
