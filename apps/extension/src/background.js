@@ -4256,12 +4256,22 @@ try {
 
 // popup 改桥地址 → SW 重连（走 handleMessage 的 pageagent-bridge-changed 分支）
 
+const PAGEAGENT_BOOT_AT = Date.now()
 async function handleBridgeRequest(method, params) {
+  // 远程重载：改完扩展后由桥触发，免去手动到 chrome://extensions 重载。
+  // 必须同步调用 reload —— SW 回包后空闲会被冻结，setTimeout 回调永不执行。
+  if (method === 'reload_extension') {
+    try {
+      chrome.runtime.reload()
+    } catch {}
+    return { status: 'reloading' }
+  }
   if (method === 'version') {
     return {
       version: 'pageagent-' + chrome.runtime.getManifest().version,
       hasPageAgent: true,
       build: chrome.runtime.getManifest().version,
+      bootAt: PAGEAGENT_BOOT_AT,
     }
   }
   if (method === 'crawl_article') {
