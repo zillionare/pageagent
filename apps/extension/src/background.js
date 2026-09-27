@@ -5002,25 +5002,29 @@ async function mpImagesPickCollection(name) {
       .toLowerCase()
   const want = norm(name)
   const dbg = {}
-  const cands = Array.from(document.querySelectorAll('div, span, a, button, label')).filter(vis)
-  const entry = cands.find(el => {
-    const t = (el.textContent || '').trim()
-    return t.length <= 16 && /合集|collection/i.test(t) && el.children.length <= 2
-  })
-  dbg.entryText = entry ? (entry.textContent || '').trim() : null
-  if (!entry) return { ok: false, err: 'no-collection-entry', dbg }
+  const area =
+    document.querySelector('#js_article_tags_area') ||
+    document.querySelector('.js_article_tags_label')
+  if (!area) return { ok: false, err: 'no-tags-area', dbg }
+  const content = () => {
+    const el = document.querySelector('.js_article_tags_content')
+    return el ? (el.textContent || '').trim() : ''
+  }
+  dbg.before = content()
+  if (norm(dbg.before) === want) return { ok: true, picked: dbg.before, dbg, via: 'already' }
+  const label = document.querySelector('.js_article_tags_label') || area
   try {
-    entry.scrollIntoView({ block: 'center' })
+    area.scrollIntoView({ block: 'center' })
   } catch {}
   await sleep(300)
   try {
-    entry.click()
+    label.click()
   } catch {}
   await sleep(1500)
   const itemsOf = () =>
     Array.from(
       document.querySelectorAll(
-        'li, div[role="option"], [class*="option" i], [class*="dropdown" i] li, [class*="list" i] > div, [class*="select" i] div'
+        'li, label, .weui-desktop-dropdown__list-ele, [class*="option" i], [class*="item" i], [class*="list" i] > div'
       )
     )
       .filter(vis)
@@ -5029,26 +5033,26 @@ async function mpImagesPickCollection(name) {
         return t && t.length <= 60
       })
   let items = itemsOf()
-  dbg.cands = items.slice(0, 25).map(el => (el.textContent || '').trim().slice(0, 30))
+  dbg.cands = items.slice(0, 30).map(el => (el.textContent || '').trim().slice(0, 30))
   let hit =
     items.find(el => norm(el.textContent) === want) ||
     items.find(el => norm(el.textContent).includes(want))
   if (!hit) {
-    const box = Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find(
-      vis
-    )
+    const box = Array.from(
+      document.querySelectorAll('input[type="text"], input:not([type])')
+    ).filter(vis)[0]
     if (box) {
       try {
         box.focus()
-        const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
-        if (desc && desc.set) desc.set.call(box, name)
+        const d = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+        if (d && d.set) d.set.call(box, name)
         else box.value = name
         box.dispatchEvent(new Event('input', { bubbles: true }))
       } catch (e) {}
       await sleep(1200)
       items = itemsOf()
       dbg.candsAfterSearch = items
-        .slice(0, 25)
+        .slice(0, 30)
         .map(el => (el.textContent || '').trim().slice(0, 30))
       hit =
         items.find(el => norm(el.textContent) === want) ||
@@ -5059,8 +5063,24 @@ async function mpImagesPickCollection(name) {
   try {
     hit.click()
   } catch {}
-  await sleep(900)
-  return { ok: true, picked: (hit.textContent || '').trim().slice(0, 30), dbg }
+  await sleep(600)
+  const conf = Array.from(
+    document.querySelectorAll(
+      '.popover_bar .jsPopoverBt, .popover_bar button, [class*="popover" i] button, .weui-desktop-dialog button'
+    )
+  )
+    .filter(vis)
+    .find(b => /^(确定|确认|OK|Confirm)$/i.test((b.textContent || '').trim()))
+  if (conf) {
+    try {
+      conf.click()
+    } catch (e) {}
+    await sleep(800)
+  }
+  dbg.confirmClicked = !!conf
+  dbg.after = content()
+  const ok = !!dbg.after && !/not added|未添加/i.test(dbg.after)
+  return { ok, picked: dbg.after, dbg }
 }
 
 function mpImagesSaveDraft() {
@@ -5194,12 +5214,34 @@ async function bridgePublishMpImages(params) {
 
   if (images.length) {
     const items = images.map((d, i) => ({ dataUrl: d, name: `quantide-p${i + 1}.png` }))
+    // 路由 A：直接给 webuploader 的 input[type=file] 赋值
     dbg.uploadInput = await runInPage(mpImagesUploadInput, [items])
     await sleep(1500)
-    let count = await waitUpload(images.length, 15000)
+    let count = await waitUpload(images.length, 12000)
     if (!count || count.count < images.length) {
+      // 路由 B：先点「Local upload」激活 webuploader picker，再赋值
+      try {
+        await runInPage(() => {
+          const btn = Array.from(
+            document.querySelectorAll('.pop-opr__button, .weui-desktop-upload__btn__wrp, a, span')
+          ).find(el => /local upload|本地上传/i.test((el.textContent || '').trim()))
+          if (btn) {
+            try {
+              btn.click()
+            } catch (e) {}
+            return true
+          }
+          return false
+        })
+      } catch (e) {}
+      await sleep(1200)
+      dbg.uploadInput2 = await runInPage(mpImagesUploadInput, [items])
+      count = await waitUpload(images.length, 12000)
+    }
+    if (!count || count.count < images.length) {
+      // 路由 C：合成拖放到「Select or drag images」区
       dbg.uploadDrop = await runInPage(mpImagesUploadDrop, [items])
-      count = await waitUpload(images.length, 15000)
+      count = await waitUpload(images.length, 12000)
     }
     dbg.afterUpload = count
   }
@@ -5236,11 +5278,27 @@ async function bridgePublishMpImages(params) {
   dbg.save = await runInPage(mpImagesSaveDraft)
 
   const ok = !!(dbg.save && dbg.save.success)
+  try {
+    const bb = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787' })
+    const base = String(bb.pageagent_bridge || '').replace(/\/$/, '')
+    if (base) {
+      await fetch(base + '/log', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          step: '[pageagent] mp-images-done',
+          detail: JSON.stringify(dbg).slice(0, 4500),
+        }),
+      })
+    }
+  } catch (e) {}
   return {
     ok,
     drafted: ok,
     titleFilled: !!(dbg.title && dbg.title.ok),
     uploaded: (dbg.afterUpload && dbg.afterUpload.count) || 0,
+    descLen: (dbg.desc && dbg.desc.len) || 0,
+    collection: (dbg.collection && dbg.collection.picked) || '',
     message: ok
       ? '公众号图片消息已保存为草稿，请人工发表'
       : (dbg.save && dbg.save.error) || '保存草稿失败',
