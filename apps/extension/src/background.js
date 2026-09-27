@@ -1,5 +1,6 @@
 // 平台配置
 import { PLATFORMS, LOGIN_CHECK_CONFIG, SYNC_HANDLERS } from '@cose/core/src/platforms/index.js'
+import { setWechatSourceUrlViaCDP } from '@cose/core/src/platforms/wechat.js'
 import { qianfanIntercept } from '@cose/core/src/platforms/qianfan.js'
 import { convertAvatarToBase64 } from '@cose/detection/src/utils.js'
 import { ensurePageAgentBridge } from './bridge-client.js'
@@ -4990,6 +4991,84 @@ function mpImagesCount() {
   }
 }
 
+async function mpImagesPickCollection(name) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const norm = s =>
+    String(s || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase()
+  const want = norm(name)
+  const dbg = {}
+  const cands = Array.from(document.querySelectorAll('div, span, a, button, label')).filter(vis)
+  const entry = cands.find(el => {
+    const t = (el.textContent || '').trim()
+    return t.length <= 12 && /合集/.test(t) && el.children.length <= 2
+  })
+  dbg.entryText = entry ? (entry.textContent || '').trim() : null
+  if (!entry) return { ok: false, err: 'no-collection-entry', dbg }
+  try {
+    entry.scrollIntoView({ block: 'center' })
+  } catch {}
+  await sleep(300)
+  try {
+    entry.click()
+  } catch {}
+  await sleep(1500)
+  const itemsOf = () =>
+    Array.from(
+      document.querySelectorAll(
+        'li, div[role="option"], [class*="option" i], [class*="dropdown" i] li, [class*="list" i] > div'
+      )
+    )
+      .filter(vis)
+      .filter(el => {
+        const t = norm(el.textContent)
+        return t && t.length <= 60
+      })
+  let items = itemsOf()
+  dbg.cands = items.slice(0, 25).map(el => (el.textContent || '').trim().slice(0, 30))
+  let hit =
+    items.find(el => norm(el.textContent) === want) ||
+    items.find(el => norm(el.textContent).includes(want))
+  if (!hit) {
+    const box = Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find(
+      vis
+    )
+    if (box) {
+      try {
+        box.focus()
+        const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')
+        if (desc && desc.set) desc.set.call(box, name)
+        else box.value = name
+        box.dispatchEvent(new Event('input', { bubbles: true }))
+      } catch {}
+      await sleep(1200)
+      items = itemsOf()
+      dbg.candsAfterSearch = items
+        .slice(0, 25)
+        .map(el => (el.textContent || '').trim().slice(0, 30))
+      hit =
+        items.find(el => norm(el.textContent) === want) ||
+        items.find(el => norm(el.textContent).includes(want))
+    }
+  }
+  if (!hit) return { ok: false, err: 'collection-not-found', dbg }
+  try {
+    hit.click()
+  } catch {}
+  await sleep(900)
+  return { ok: true, picked: (hit.textContent || '').trim().slice(0, 30), dbg }
+}
+
 function mpImagesSaveDraft() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -5076,7 +5155,7 @@ async function bridgePublishMpImages(params) {
   dbg.tokenTail = String(token).slice(-4)
 
   // 3. 打开图片消息编辑器（type=77）
-  const editorUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=77&createType=0&token=${token}&lang=zh_CN`
+  const editorUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=77&createType=8&token=${token}&lang=en_US`
   await chrome.tabs.update(tabId, { url: editorUrl })
   await waitForTab(tabId)
   await sleep(2500)
@@ -5146,7 +5225,27 @@ async function bridgePublishMpImages(params) {
     }
   }
 
-  // 8. 保存草稿
+  // 8. 原文链接（复用图文 CDP 方案：真实点击+逐字键入+popover 确定）
+  if (params.blogUrl) {
+    try {
+      dbg.sourceUrl = await setWechatSourceUrlViaCDP(tabId, String(params.blogUrl), chrome)
+    } catch (e) {
+      dbg.sourceUrl = { ok: false, err: String((e && e.message) || e).slice(0, 160) }
+    }
+    await sleep(800)
+  }
+
+  // 9. 合集（如 QUANT LOOP）
+  if (params.collection) {
+    try {
+      dbg.collection = await runInPage(mpImagesPickCollection, [String(params.collection)])
+    } catch (e) {
+      dbg.collection = { ok: false, err: String((e && e.message) || e).slice(0, 160) }
+    }
+    await sleep(500)
+  }
+
+  // 10. 保存草稿
   await sleep(600)
   dbg.save = await runInPage(mpImagesSaveDraft)
 

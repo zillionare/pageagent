@@ -225,7 +225,9 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
       // quantclaw: 摘要 + 封面入口诊断
       let descFilled = false
       if (desc) {
-        const descBox = document.querySelector('textarea.js_desc, textarea[placeholder*="摘要"], textarea[placeholder*="选填"]')
+        const descBox = document.querySelector(
+          'textarea.js_desc, textarea[placeholder*="摘要"], textarea[placeholder*="选填"]'
+        )
         if (descBox) {
           descBox.focus()
           const proto = window.HTMLTextAreaElement.prototype
@@ -237,7 +239,9 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
       }
       // 封面：找入口（只诊断+回传，不自动上传；上传需素材库两步，下一版）
       const coverDiag = {
-        labels: Array.from(document.querySelectorAll('label')).filter(el => (el.textContent ?? '').includes('封面')).length,
+        labels: Array.from(document.querySelectorAll('label')).filter(el =>
+          (el.textContent ?? '').includes('封面')
+        ).length,
         fileInputs: Array.from(document.querySelectorAll('input[type="file"]')).length,
         hasThumb: !!thumb,
       }
@@ -263,13 +267,24 @@ async function fillWechatContent(title, htmlBody, desc, thumb) {
 function wechatSetCoverByDrop(coverUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
     const realDialog = () => {
-      const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+      const hit = Array.from(
+        document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')
+      ).filter(vis)
       return hit.length ? hit[hit.length - 1] : null
     }
-    const coverInputs = () => Array.from(document.querySelectorAll('input[type="file"]'))
-      .filter(i => /bmp/i.test(i.accept || ''))
+    const coverInputs = () =>
+      Array.from(document.querySelectorAll('input[type="file"]')).filter(i =>
+        /bmp/i.test(i.accept || '')
+      )
     const dbg = {}
     try {
       const resp = await fetch(coverUrl)
@@ -278,30 +293,41 @@ function wechatSetCoverByDrop(coverUrl) {
       const ext = (blob.type.split('/')[1] || 'jpg').split('+')[0]
       const file = new File([blob], `cover.${ext}`, { type: blob.type || 'image/jpeg' })
       // 点击封面区，触发其懒加载的封面 input
-      const area = document.querySelector('#js_cover_area') || document.querySelector('.js_cover_btn_area')
+      const area =
+        document.querySelector('#js_cover_area') || document.querySelector('.js_cover_btn_area')
       if (!area) return { ok: false, err: 'no-cover-area' }
-      try { area.scrollIntoView({ block: 'center' }) } catch {}
+      try {
+        area.scrollIntoView({ block: 'center' })
+      } catch {}
       await sleep(300)
       const clickTarget = document.querySelector('.js_cover_btn_area') || area
-      try { clickTarget.click() } catch {}
+      try {
+        clickTarget.click()
+      } catch {}
       await sleep(1200)
-      dbg.inputsAfterClick = Array.from(document.querySelectorAll('input[type="file"]'))
-        .map(i => String(i.accept || '').slice(0, 50))
+      dbg.inputsAfterClick = Array.from(document.querySelectorAll('input[type="file"]')).map(i =>
+        String(i.accept || '').slice(0, 50)
+      )
       let inputs = coverInputs()
       if (!inputs.length) {
         // 再点一次 / 等一会
-        try { clickTarget.click() } catch {}
+        try {
+          clickTarget.click()
+        } catch {}
         await sleep(1500)
         inputs = coverInputs()
-        dbg.inputsAfterClick2 = Array.from(document.querySelectorAll('input[type="file"]'))
-          .map(i => String(i.accept || '').slice(0, 50))
+        dbg.inputsAfterClick2 = Array.from(document.querySelectorAll('input[type="file"]')).map(i =>
+          String(i.accept || '').slice(0, 50)
+        )
       }
       let dlg = null
       const tried = []
       for (const inp of inputs) {
         const dt = new DataTransfer()
         dt.items.add(file)
-        try { inp.files = dt.files } catch {}
+        try {
+          inp.files = dt.files
+        } catch {}
         inp.dispatchEvent(new Event('change', { bubbles: true }))
         inp.dispatchEvent(new Event('input', { bubbles: true }))
         await sleep(1800)
@@ -313,10 +339,12 @@ function wechatSetCoverByDrop(coverUrl) {
       let crop = null
       if (dlg) {
         const findOk = () => {
-          const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary')
-            || dlg.querySelector('.weui-desktop-btn_primary')
+          const prim =
+            dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') ||
+            dlg.querySelector('.weui-desktop-btn_primary')
           if (prim && vis(prim) && !prim.disabled) return prim
-          return Array.from(dlg.querySelectorAll('button')).filter(vis)
+          return Array.from(dlg.querySelectorAll('button'))
+            .filter(vis)
             .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && !b.disabled)
         }
         let okBtn = null
@@ -331,7 +359,13 @@ function wechatSetCoverByDrop(coverUrl) {
           okBtn.click()
           await sleep(2000)
         } else {
-          crop = { err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 10) }
+          crop = {
+            err: 'no-confirm-btn',
+            btns: Array.from(dlg.querySelectorAll('button'))
+              .filter(vis)
+              .map(b => (b.textContent || '').trim().slice(0, 8))
+              .slice(0, 10),
+          }
         }
       } else {
         crop = { err: inputs.length ? 'no-dialog-after-file' : 'no-cover-input' }
@@ -339,10 +373,13 @@ function wechatSetCoverByDrop(coverUrl) {
       // 等封面预览出现
       const t0 = Date.now()
       while (Date.now() - t0 < 30000) {
-        const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
+        const prev =
+          document.querySelector('.js_cover_preview_new') ||
+          document.querySelector('.js_cover_preview_square')
         if (prev && vis(prev)) {
           const bg = (prev.style && prev.style.backgroundImage) || ''
-          if (/url\(/.test(bg) && !/url\(["']{2}\)/.test(bg) && !/url\(\)/.test(bg)) return { ok: true, via: 'preview-bg', crop, dbg }
+          if (/url\(/.test(bg) && !/url\(["']{2}\)/.test(bg) && !/url\(\)/.test(bg))
+            return { ok: true, via: 'preview-bg', crop, dbg }
           const img = prev.querySelector('img')
           if (img && img.src) return { ok: true, via: 'preview-img', crop, dbg }
         }
@@ -350,7 +387,7 @@ function wechatSetCoverByDrop(coverUrl) {
       }
       return { ok: false, err: 'cover-preview-timeout', crop, dbg }
     } catch (e) {
-      return { ok: false, err: String(e && e.message || e), dbg }
+      return { ok: false, err: String((e && e.message) || e), dbg }
     }
   })()
 }
@@ -359,9 +396,18 @@ function wechatSetCoverByDrop(coverUrl) {
 function clickWechatCropConfirm() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
     const realDialog = () => {
-      const hit = Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+      const hit = Array.from(
+        document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')
+      ).filter(vis)
       return hit.length ? hit[hit.length - 1] : null
     }
     const t0 = Date.now()
@@ -373,10 +419,12 @@ function clickWechatCropConfirm() {
     }
     if (!dlg) return { ok: false, err: 'no-crop-dialog' }
     const findOk = () => {
-      const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary')
-        || dlg.querySelector('.weui-desktop-btn_primary')
+      const prim =
+        dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') ||
+        dlg.querySelector('.weui-desktop-btn_primary')
       if (prim && vis(prim) && !prim.disabled) return prim
-      return Array.from(dlg.querySelectorAll('button')).filter(vis)
+      return Array.from(dlg.querySelectorAll('button'))
+        .filter(vis)
         .find(b => /确定|确认|完成|保存|应用/.test((b.textContent || '').trim()) && !b.disabled)
     }
     let okBtn = null
@@ -386,7 +434,15 @@ function clickWechatCropConfirm() {
       if (okBtn) break
       await sleep(400)
     }
-    if (!okBtn) return { ok: false, err: 'no-confirm-btn', btns: Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 10) }
+    if (!okBtn)
+      return {
+        ok: false,
+        err: 'no-confirm-btn',
+        btns: Array.from(dlg.querySelectorAll('button'))
+          .filter(vis)
+          .map(b => (b.textContent || '').trim().slice(0, 8))
+          .slice(0, 10),
+      }
     okBtn.click()
     return { ok: true, clicked: (okBtn.textContent || '').trim().slice(0, 8) }
   })()
@@ -396,8 +452,17 @@ function clickWechatCropConfirm() {
 function nudgeWechatCoverInput() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-    const realDialog = () => Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis).length > 0
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
+    const realDialog = () =>
+      Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).filter(vis)
+        .length > 0
     await sleep(900)
     if (realDialog()) return { dialog: true }
     const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
@@ -414,13 +479,23 @@ function nudgeWechatCoverInput() {
 function waitWechatCoverPreview() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
     const t0 = Date.now()
     while (Date.now() - t0 < 30000) {
-      const prev = document.querySelector('.js_cover_preview_new') || document.querySelector('.js_cover_preview_square')
+      const prev =
+        document.querySelector('.js_cover_preview_new') ||
+        document.querySelector('.js_cover_preview_square')
       if (prev && vis(prev)) {
         const bg = (prev.style && prev.style.backgroundImage) || ''
-        if (/url\(/.test(bg) && !/url\(["']{2}\)/.test(bg) && !/url\(\)/.test(bg)) return { ok: true, via: 'preview-bg' }
+        if (/url\(/.test(bg) && !/url\(["']{2}\)/.test(bg) && !/url\(\)/.test(bg))
+          return { ok: true, via: 'preview-bg' }
         const img = prev.querySelector('img')
         if (img && img.src) return { ok: true, via: 'preview-img' }
       }
@@ -436,14 +511,18 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
   const dbg = {}
   // 1. 下载封面到磁盘
   const extM = String(coverUrl).match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)
-  const filename = `cf-cover-${Date.now()}.${(extM && extM[1] || 'jpg').toLowerCase()}`
+  const filename = `cf-cover-${Date.now()}.${((extM && extM[1]) || 'jpg').toLowerCase()}`
   const dlId = await chrome.downloads.download({ url: coverUrl, filename, saveAs: false })
   let absPath = null
   const t0 = Date.now()
   for (;;) {
     const [it] = await chrome.downloads.search({ id: dlId })
-    if (it && it.state === 'complete' && it.filename) { absPath = it.filename; break }
-    if (it && (it.state === 'interrupted' || it.error)) throw new Error('下载失败: ' + (it.error || it.state))
+    if (it && it.state === 'complete' && it.filename) {
+      absPath = it.filename
+      break
+    }
+    if (it && (it.state === 'interrupted' || it.error))
+      throw new Error('下载失败: ' + (it.error || it.state))
     if (Date.now() - t0 > 25000) throw new Error('下载超时')
     await sleep(400)
   }
@@ -456,16 +535,28 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
   try {
     await chrome.debugger.sendCommand({ tabId }, 'DOM.enable')
     await chrome.debugger.sendCommand({ tabId }, 'Page.enable')
-    await chrome.debugger.sendCommand({ tabId }, 'Page.setInterceptFileChooserDialog', { enabled: true })
+    await chrome.debugger.sendCommand({ tabId }, 'Page.setInterceptFileChooserDialog', {
+      enabled: true,
+    })
     // 3. 封面区坐标 + CDP 真实点击（带用户激活）
     const [{ result: pt }] = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        const el = document.querySelector('.js_cover_btn_area') || document.querySelector('#js_cover_area') || document.querySelector('.select-cover__btn')
+        const el =
+          document.querySelector('.js_cover_btn_area') ||
+          document.querySelector('#js_cover_area') ||
+          document.querySelector('.select-cover__btn')
         if (!el) return null
-        try { el.scrollIntoView({ block: 'center' }) } catch {}
+        try {
+          el.scrollIntoView({ block: 'center' })
+        } catch {}
         const r = el.getBoundingClientRect()
-        return { x: Math.round(r.left + Math.min(r.width / 2, 40)), y: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height) }
+        return {
+          x: Math.round(r.left + Math.min(r.width / 2, 40)),
+          y: Math.round(r.top + r.height / 2),
+          w: Math.round(r.width),
+          h: Math.round(r.height),
+        }
       },
       world: 'MAIN',
     })
@@ -476,32 +567,65 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
     const dragData = { items: [], files: [absPath], dragOperationsMask: 1 }
     try {
       for (const type of ['dragEnter', 'dragOver']) {
-        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchDragEvent', { type, x: pt.x, y: pt.y, data: dragData })
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchDragEvent', {
+          type,
+          x: pt.x,
+          y: pt.y,
+          data: dragData,
+        })
         await sleep(250)
       }
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchDragEvent', { type: 'drop', x: pt.x, y: pt.y, data: dragData })
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchDragEvent', {
+        type: 'drop',
+        x: pt.x,
+        y: pt.y,
+        data: dragData,
+      })
       dbg.dragDispatched = true
-    } catch (e) { dbg.dragErr = String(e?.message ?? e) }
+    } catch (e) {
+      dbg.dragErr = String(e?.message ?? e)
+    }
     await sleep(2500)
     let [{ result: hasDlg }] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).some(el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }),
+      func: () =>
+        Array.from(document.querySelectorAll('.weui-desktop-dialog, [role="dialog"]')).some(el => {
+          try {
+            const r = el.getBoundingClientRect()
+            return r.width > 0 && r.height > 0
+          } catch {
+            return false
+          }
+        }),
       world: 'MAIN',
     })
     dbg.dialogAfterDrag = !!hasDlg
     // 路线B：点击 + 拦截文件选择器（备用）
     if (!dbg.dialogAfterDrag) {
       for (const type of ['mousePressed', 'mouseReleased']) {
-        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type, x: pt.x, y: pt.y, button: 'left', clickCount: 1 })
+        await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+          type,
+          x: pt.x,
+          y: pt.y,
+          button: 'left',
+          clickCount: 1,
+        })
         await sleep(90)
       }
       const t1 = Date.now()
       while (Date.now() - t1 < 5000 && !dbg.chooser) await sleep(200)
       if (dbg.chooser) {
-        await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', { files: [absPath], backendNodeId: dbg.chooser.backendNodeId })
+        await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+          files: [absPath],
+          backendNodeId: dbg.chooser.backendNodeId,
+        })
         await sleep(1200)
         try {
-          const [{ result: nudge }] = await chrome.scripting.executeScript({ target: { tabId }, func: nudgeWechatCoverInput, world: 'MAIN' })
+          const [{ result: nudge }] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: nudgeWechatCoverInput,
+            world: 'MAIN',
+          })
           dbg.nudge = nudge
         } catch {}
         await sleep(1200)
@@ -510,15 +634,27 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
       }
     }
     // 4. 裁剪确认
-    const [{ result: crop }] = await chrome.scripting.executeScript({ target: { tabId }, func: clickWechatCropConfirm, world: 'MAIN' })
+    const [{ result: crop }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: clickWechatCropConfirm,
+      world: 'MAIN',
+    })
     dbg.crop = crop
     await sleep(2500)
     // 5. 等封面预览
-    const [{ result: prev }] = await chrome.scripting.executeScript({ target: { tabId }, func: waitWechatCoverPreview, world: 'MAIN' })
+    const [{ result: prev }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: waitWechatCoverPreview,
+      world: 'MAIN',
+    })
     return { ok: !!(prev && prev.ok), crop, preview: prev, dbg }
   } finally {
-    try { chrome.debugger.onEvent.removeListener(onEvent) } catch {}
-    try { await chrome.debugger.detach({ tabId }) } catch {}
+    try {
+      chrome.debugger.onEvent.removeListener(onEvent)
+    } catch {}
+    try {
+      await chrome.debugger.detach({ tabId })
+    } catch {}
   }
 }
 
@@ -526,17 +662,30 @@ async function setWechatCoverViaCDP(tabId, coverUrl, chrome) {
 function wechatSourceUrlPrep() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-    const findInput = () => Array.from(document.querySelectorAll('input[name="source_url"], input.js_url, textarea.js_url')).find(vis)
-    const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
+    const findInput = () =>
+      Array.from(
+        document.querySelectorAll('input[name="source_url"], input.js_url, textarea.js_url')
+      ).find(vis)
+    const area =
+      document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
     if (!area) return { ok: false, err: 'no-url-area' }
-    try { area.scrollIntoView({ block: 'center' }) } catch {}
+    try {
+      area.scrollIntoView({ block: 'center' })
+    } catch {}
     await sleep(400)
     const cb = area.querySelector('input[name="source_url_checked"]')
     const allow = area.querySelector('.js_article_url_allow_click')
     let inp = findInput()
     const steps = []
-    const poll = async (ms) => {
+    const poll = async ms => {
       const t0 = Date.now()
       while (Date.now() - t0 < ms) {
         inp = findInput()
@@ -547,9 +696,15 @@ function wechatSourceUrlPrep() {
     }
     // 入口是 toggle：每次点击翻转显示，切忌连点两次。点一次 → 长轮询等出现
     if (!inp) {
-      const toggles = [['allow', allow], ['cb', cb], ['area', area]].filter(x => x[1])
+      const toggles = [
+        ['allow', allow],
+        ['cb', cb],
+        ['area', area],
+      ].filter(x => x[1])
       for (const [name, el] of toggles) {
-        try { el.click() } catch {}
+        try {
+          el.click()
+        } catch {}
         steps.push(name)
         if (await poll(2500)) break
       }
@@ -559,13 +714,19 @@ function wechatSourceUrlPrep() {
     // popover 的「确定」按钮（点别处会关掉 popover，必须点它）
     let conf = null
     for (const b of document.querySelectorAll('.popover_bar .jsPopoverBt')) {
-      if ((b.textContent || '').trim() === '确定') { conf = b; break }
+      if ((b.textContent || '').trim() === '确定') {
+        conf = b
+        break
+      }
     }
     const cr = conf ? conf.getBoundingClientRect() : null
     return {
-      ok: true, steps,
+      ok: true,
+      steps,
       inputRect: { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) },
-      confirmRect: cr ? { x: Math.round(cr.left + cr.width / 2), y: Math.round(cr.top + cr.height / 2) } : null,
+      confirmRect: cr
+        ? { x: Math.round(cr.left + cr.width / 2), y: Math.round(cr.top + cr.height / 2) }
+        : null,
       cbChecked: cb ? cb.checked : null,
     }
   })()
@@ -573,16 +734,26 @@ function wechatSourceUrlPrep() {
 
 // 原文链接·状态（页面主世界）：读 UI 与输入值
 function wechatSourceUrlState() {
-  const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-  const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const area =
+    document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
   if (!area) return { err: 'no-url-area' }
   const u = area.querySelector('.lbl_content_desc_url')
   const d = area.querySelector('.lbl_content_desc_default')
   const inp = document.querySelector('input[name="source_url"], input.js_url')
   const cb = document.querySelector('input[name="source_url_checked"]')
   return {
-    url: u ? (u.textContent || '').trim().slice(0, 80) : null, urlVis: u ? vis(u) : false,
-    def: d ? (d.textContent || '').trim().slice(0, 20) : null, defVis: d ? vis(d) : false,
+    url: u ? (u.textContent || '').trim().slice(0, 80) : null,
+    urlVis: u ? vis(u) : false,
+    def: d ? (d.textContent || '').trim().slice(0, 20) : null,
+    defVis: d ? vis(d) : false,
     val: inp ? String(inp.value || '').slice(0, 80) : null,
     cbChecked: cb ? cb.checked : null,
   }
@@ -593,14 +764,22 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const dbg = {}
   const [{ result: prep }] = await chrome.scripting.executeScript({
-    target: { tabId }, func: wechatSourceUrlPrep, world: 'MAIN',
+    target: { tabId },
+    func: wechatSourceUrlPrep,
+    world: 'MAIN',
   })
   dbg.prep = prep
   if (!prep || !prep.ok) return { ok: false, err: (prep && prep.err) || 'prep-failed', dbg }
   await chrome.debugger.attach({ tabId }, '1.3')
-  const click = async (pt) => {
+  const click = async pt => {
     for (const type of ['mousePressed', 'mouseReleased']) {
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type, x: pt.x, y: pt.y, button: 'left', clickCount: 1 })
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
+        type,
+        x: pt.x,
+        y: pt.y,
+        button: 'left',
+        clickCount: 1,
+      })
       await sleep(70)
     }
   }
@@ -610,13 +789,25 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
     await sleep(300)
     // 2. 逐字键入（keyDown+keyUp 真实事件链）
     for (const ch of String(url)) {
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyDown', text: ch, unmodifiedText: ch, key: ch })
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { type: 'keyUp', key: ch })
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        text: ch,
+        unmodifiedText: ch,
+        key: ch,
+      })
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: ch,
+      })
       await sleep(18)
     }
     await sleep(400)
     const readState = async () => {
-      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func: wechatSourceUrlState, world: 'MAIN' })
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: wechatSourceUrlState,
+        world: 'MAIN',
+      })
       return result || {}
     }
     dbg.afterType = await readState()
@@ -633,9 +824,21 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
     try {
       const [{ result: errs }] = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => Array.from(document.querySelectorAll('.js_url_error, .js_url_ban_wording, .js_common_err, .js_url_tempkey, .js_warn'))
-          .filter(el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } })
-          .map(el => (el.textContent || '').trim().slice(0, 40)),
+        func: () =>
+          Array.from(
+            document.querySelectorAll(
+              '.js_url_error, .js_url_ban_wording, .js_common_err, .js_url_tempkey, .js_warn'
+            )
+          )
+            .filter(el => {
+              try {
+                const r = el.getBoundingClientRect()
+                return r.width > 0 && r.height > 0
+              } catch {
+                return false
+              }
+            })
+            .map(el => (el.textContent || '').trim().slice(0, 40)),
         world: 'MAIN',
       })
       dbg.errMsgs = errs
@@ -643,7 +846,9 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
     const ok = !!(state && ((state.urlVis && state.url) || state.val === url))
     return { ok, state, dbg }
   } finally {
-    try { await chrome.debugger.detach({ tabId }) } catch {}
+    try {
+      await chrome.debugger.detach({ tabId })
+    } catch {}
   }
 }
 
@@ -651,37 +856,60 @@ async function setWechatSourceUrlViaCDP(tabId, url, chrome) {
 function wechatSetSourceUrl(blogUrl) {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-    const dlgCands = () => Array.from(document.querySelectorAll(
-      '.weui-desktop-dialog, .weui-desktop-dialog_wrp, [role="dialog"], [class*="dialog" i], [class*="popup" i]'
-    )).filter(vis)
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
+    const dlgCands = () =>
+      Array.from(
+        document.querySelectorAll(
+          '.weui-desktop-dialog, .weui-desktop-dialog_wrp, [role="dialog"], [class*="dialog" i], [class*="popup" i]'
+        )
+      ).filter(vis)
     const findDlgInput = () => {
       for (const d of dlgCands()) {
-        const ins = Array.from(d.querySelectorAll('input, textarea'))
-          .filter(i => !['checkbox', 'radio', 'file', 'hidden', 'submit', 'button'].includes(i.type || 'text'))
+        const ins = Array.from(d.querySelectorAll('input, textarea')).filter(
+          i =>
+            !['checkbox', 'radio', 'file', 'hidden', 'submit', 'button'].includes(i.type || 'text')
+        )
         if (ins.length) {
-          const byName = ins.find(i => /url|source|链接|原文/i.test((i.name || '') + String(i.className || '') + (i.placeholder || '')))
+          const byName = ins.find(i =>
+            /url|source|链接|原文/i.test(
+              (i.name || '') + String(i.className || '') + (i.placeholder || '')
+            )
+          )
           return { dlg: d, inp: byName || ins[0] }
         }
       }
       return null
     }
     const findInline = () => {
-      const cands = Array.from(document.querySelectorAll('input[name="source_url"], input.js_url, textarea.js_url'))
+      const cands = Array.from(
+        document.querySelectorAll('input[name="source_url"], input.js_url, textarea.js_url')
+      )
       return cands.find(i => vis(i)) || null
     }
     const dbg = {}
     try {
-      const area = document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
+      const area =
+        document.querySelector('#js_article_url_area') || document.querySelector('.js_url_area')
       if (!area) return { ok: false, err: 'no-url-area' }
-      try { area.scrollIntoView({ block: 'center' }) } catch {}
+      try {
+        area.scrollIntoView({ block: 'center' })
+      } catch {}
       await sleep(300)
       const descState = () => {
         const u = area.querySelector('.lbl_content_desc_url')
         const d = area.querySelector('.lbl_content_desc_default')
         return {
-          url: u ? (u.textContent || '').trim().slice(0, 60) : null, urlVis: u ? vis(u) : false,
-          def: d ? (d.textContent || '').trim().slice(0, 20) : null, defVis: d ? vis(d) : false,
+          url: u ? (u.textContent || '').trim().slice(0, 60) : null,
+          urlVis: u ? vis(u) : false,
+          def: d ? (d.textContent || '').trim().slice(0, 20) : null,
+          defVis: d ? vis(d) : false,
         }
       }
       dbg.before = descState()
@@ -695,33 +923,57 @@ function wechatSetSourceUrl(blogUrl) {
       let found = null
       const tried = []
       for (const [name, el] of targets) {
-        try { el.click() } catch {}
+        try {
+          el.click()
+        } catch {}
         const t = Date.now()
         while (Date.now() - t < 2500) {
           found = findDlgInput()
           if (found) break
           const inline = findInline()
-          if (inline) { found = { dlg: null, inp: inline, inline: true }; break }
+          if (inline) {
+            found = { dlg: null, inp: inline, inline: true }
+            break
+          }
           await sleep(300)
         }
         tried.push({ name, hit: !!found })
         if (found) break
       }
       dbg.tried = tried
-      dbg.dlgCls = found && found.dlg ? String(found.dlg.className).slice(0, 70) : (found ? 'inline' : null)
+      dbg.dlgCls =
+        found && found.dlg ? String(found.dlg.className).slice(0, 70) : found ? 'inline' : null
       if (!found) {
-        dbg.dialogs = dlgCands().slice(0, 4).map(d => ({ cls: String(d.className).slice(0, 60), text: (d.textContent || '').trim().slice(0, 50), html: d.innerHTML.slice(0, 700) }))
+        dbg.dialogs = dlgCands()
+          .slice(0, 4)
+          .map(d => ({
+            cls: String(d.className).slice(0, 60),
+            text: (d.textContent || '').trim().slice(0, 50),
+            html: d.innerHTML.slice(0, 700),
+          }))
         dbg.areaHtml = area.outerHTML.slice(0, 900)
-        dbg.urlInputs = Array.from(document.querySelectorAll('input[name="source_url"], input.js_url')).map(i => ({ vis: vis(i), val: String(i.value || '').slice(0, 30), parentVis: i.parentElement ? vis(i.parentElement) : null }))
+        dbg.urlInputs = Array.from(
+          document.querySelectorAll('input[name="source_url"], input.js_url')
+        ).map(i => ({
+          vis: vis(i),
+          val: String(i.value || '').slice(0, 30),
+          parentVis: i.parentElement ? vis(i.parentElement) : null,
+        }))
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
         return { ok: false, err: 'no-input-after-clicks', dbg }
       }
       const dlg = found.dlg
       const inp = found.inp
       inp.focus()
-      const proto = inp.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set
-      if (setter) setter.call(inp, blogUrl); else inp.value = blogUrl
+      const proto =
+        inp.tagName === 'TEXTAREA'
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype
+      const setter =
+        Object.getOwnPropertyDescriptor(proto, 'value') &&
+        Object.getOwnPropertyDescriptor(proto, 'value').set
+      if (setter) setter.call(inp, blogUrl)
+      else inp.value = blogUrl
       inp.dispatchEvent(new Event('input', { bubbles: true }))
       inp.dispatchEvent(new Event('change', { bubbles: true }))
       dbg.value = String(inp.value || '').slice(0, 60)
@@ -731,23 +983,36 @@ function wechatSetSourceUrl(blogUrl) {
       try {
         const cb = document.querySelector('#js_article_url_area input[name="source_url_checked"]')
         if (cb) {
-          if (!cb.checked) { cb.click(); await sleep(500) }
+          if (!cb.checked) {
+            cb.click()
+            await sleep(500)
+          }
           cbChecked = cb.checked
         }
       } catch {}
       dbg.cbChecked = cbChecked
       if (dlg) {
         const findOk = () => {
-          const prim = dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') || dlg.querySelector('.weui-desktop-btn_primary')
+          const prim =
+            dlg.querySelector('.weui-desktop-dialog__ft .weui-desktop-btn_primary') ||
+            dlg.querySelector('.weui-desktop-btn_primary')
           if (prim && vis(prim) && !prim.disabled) return prim
-          return Array.from(dlg.querySelectorAll('button')).filter(vis)
+          return Array.from(dlg.querySelectorAll('button'))
+            .filter(vis)
             .find(b => /确定|确认|完成|保存/.test((b.textContent || '').trim()) && !b.disabled)
         }
         let okBtn = null
         const t1 = Date.now()
-        while (Date.now() - t1 < 5000) { okBtn = findOk(); if (okBtn) break; await sleep(400) }
+        while (Date.now() - t1 < 5000) {
+          okBtn = findOk()
+          if (okBtn) break
+          await sleep(400)
+        }
         if (!okBtn) {
-          dbg.dialogButtons = Array.from(dlg.querySelectorAll('button')).filter(vis).map(b => (b.textContent || '').trim().slice(0, 8)).slice(0, 8)
+          dbg.dialogButtons = Array.from(dlg.querySelectorAll('button'))
+            .filter(vis)
+            .map(b => (b.textContent || '').trim().slice(0, 8))
+            .slice(0, 8)
           dbg.dlgHtml = dlg.innerHTML.slice(0, 800)
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
           return { ok: false, err: 'no-dialog-confirm', dbg }
@@ -756,16 +1021,20 @@ function wechatSetSourceUrl(blogUrl) {
         dbg.confirmClicked = true
       } else {
         // 行内输入：回车/失焦提交
-        try { inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) } catch {}
+        try {
+          inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        } catch {}
         inp.dispatchEvent(new Event('blur', { bubbles: true }))
       }
       await sleep(1600)
       dbg.after = descState()
-      const changedOk = (dbg.after.urlVis && dbg.after.url) || (!dbg.after.defVis)
-        || (dbg.cbChecked === true && dbg.value === blogUrl)
+      const changedOk =
+        (dbg.after.urlVis && dbg.after.url) ||
+        !dbg.after.defVis ||
+        (dbg.cbChecked === true && dbg.value === blogUrl)
       return { ok: !!changedOk, dbg }
     } catch (e) {
-      return { ok: false, err: String(e && e.message || e), dbg }
+      return { ok: false, err: String((e && e.message) || e), dbg }
     }
   })()
 }
@@ -774,9 +1043,18 @@ function wechatSetSourceUrl(blogUrl) {
 function saveWechatDraft() {
   return (async () => {
     const sleep = ms => new Promise(r => setTimeout(r, ms))
-    const vis = el => { try { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 } catch { return false } }
-    const findBtn = () => Array.from(document.querySelectorAll('button')).find(b =>
-      (b.textContent || '').includes('保存为草稿'))
+    const vis = el => {
+      try {
+        const r = el.getBoundingClientRect()
+        return r.width > 0 && r.height > 0
+      } catch {
+        return false
+      }
+    }
+    const findBtn = () =>
+      Array.from(document.querySelectorAll('button')).find(b =>
+        (b.textContent || '').includes('保存为草稿')
+      )
     const btn = findBtn()
     if (!btn) return { success: false, error: '未找到保存按钮' }
     btn.click()
@@ -784,8 +1062,14 @@ function saveWechatDraft() {
     // 等成功提示（toast/文案），最多 15s
     const t0 = Date.now()
     while (Date.now() - t0 < 15000) {
-      const nodes = Array.from(document.querySelectorAll('[class*="toast" i], [class*="tips" i], .weui-desktop-toast, [class*="message" i]'))
-      const hit = nodes.find(n => vis(n) && /保存成功|已保存|保存为草稿成功|草稿保存成功/.test(n.textContent || ''))
+      const nodes = Array.from(
+        document.querySelectorAll(
+          '[class*="toast" i], [class*="tips" i], .weui-desktop-toast, [class*="message" i]'
+        )
+      )
+      const hit = nodes.find(
+        n => vis(n) && /保存成功|已保存|保存为草稿成功|草稿保存成功/.test(n.textContent || '')
+      )
       if (hit) return { success: true, via: 'toast' }
       await sleep(700)
     }
@@ -938,7 +1222,10 @@ async function syncWechatContent(tab, content, helpers) {
   console.log('[COSE] 微信内容填充成功，字数:', fillResult.wordCount)
   const wxBits = []
   if (fillResult.descFilled) wxBits.push('摘要OK')
-  if (fillResult.coverDiag) wxBits.push(`封面入口:label${fillResult.coverDiag.labels}/input${fillResult.coverDiag.fileInputs}`)
+  if (fillResult.coverDiag)
+    wxBits.push(
+      `封面入口:label${fillResult.coverDiag.labels}/input${fillResult.coverDiag.fileInputs}`
+    )
   var wxSuffix = wxBits.length ? `（${wxBits.join('，')}）` : ''
 
   // 步骤5b：封面（frontmatter thumb → CDP 拦文件选择器上传）
@@ -946,7 +1233,9 @@ async function syncWechatContent(tab, content, helpers) {
   if (content.thumb) {
     try {
       coverRes = await setWechatCoverViaCDP(tab.id, content.thumb, chrome)
-    } catch (e) { coverRes = { ok: false, err: String(e?.message ?? e) } }
+    } catch (e) {
+      coverRes = { ok: false, err: String(e?.message ?? e) }
+    }
     console.log('[COSE] 微信封面结果:', JSON.stringify(coverRes))
     await new Promise(resolve => setTimeout(resolve, 1500))
   }
@@ -965,7 +1254,9 @@ async function syncWechatContent(tab, content, helpers) {
           world: 'MAIN',
         })
         srcRes = { via: 'fallback', ...(result || {}) }
-      } catch (e2) { srcRes = { ok: false, err: String(e2?.message ?? e2) } }
+      } catch (e2) {
+        srcRes = { ok: false, err: String(e2?.message ?? e2) }
+      }
     }
     console.log('[COSE] 微信原文链接结果:', JSON.stringify(srcRes))
   }
@@ -980,17 +1271,27 @@ async function syncWechatContent(tab, content, helpers) {
       world: 'MAIN',
     })
     saveRes = result
-  } catch (e) { saveRes = { success: false, error: String(e?.message ?? e) } }
+  } catch (e) {
+    saveRes = { success: false, error: String(e?.message ?? e) }
+  }
   console.log('[COSE] 微信保存结果:', JSON.stringify(saveRes))
 
   // 结果上报桥日志
   try {
     const bb = await chrome.storage.sync.get({ pageagent_bridge: 'http://192.168.0.102:8787' })
-    await fetch(((bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '')) + '/log', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ step: '[pageagent] wechat-done', detail: JSON.stringify({
-        cover: coverRes, sourceUrl: srcRes, save: saveRes, wordCount: fillResult.wordCount, imageCount: fillResult.imageCount,
-      }).slice(0, 4000) }),
+    await fetch((bb.pageagent_bridge || 'http://192.168.0.102:8787').replace(/\/$/, '') + '/log', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        step: '[pageagent] wechat-done',
+        detail: JSON.stringify({
+          cover: coverRes,
+          sourceUrl: srcRes,
+          save: saveRes,
+          wordCount: fillResult.wordCount,
+          imageCount: fillResult.imageCount,
+        }).slice(0, 4000),
+      }),
     })
   } catch {}
 
@@ -1002,4 +1303,12 @@ async function syncWechatContent(tab, content, helpers) {
 }
 
 // 导出
-export { WechatPlatform, fillWechatContent, pickWechatBodyProseMirrorCandidate, syncWechatContent }
+export {
+  WechatPlatform,
+  fillWechatContent,
+  pickWechatBodyProseMirrorCandidate,
+  syncWechatContent,
+  wechatSourceUrlPrep,
+  wechatSourceUrlState,
+  setWechatSourceUrlViaCDP,
+}
