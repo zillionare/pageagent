@@ -4275,6 +4275,7 @@ async function handleBridgeRequest(method, params) {
   if (method === 'publish_content') return await dispatchXpress('publish_content', params ?? {})
   if (method === 'publish_ring_pin') return await dispatchZhihuPin('publish_ring_pin', params ?? {})
   if (method === 'publish_mp_images') return await bridgePublishMpImages(params ?? {})
+  if (method === 'extract_jobs') return await bridgeExtractJobs(params ?? {})
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
 }
 
@@ -5365,6 +5366,95 @@ async function bridgePublishMpImages(params) {
   }
 }
 
+// ===== 招聘页岗位提取（quantclaw）：mokahr 等 SPA/WAF 站点 =====
+// 在真实浏览器开 tab（自动过 WAF JS 挑战）→ 等渲染 → 抓岗位锚点。
+function mpExtractJobs() {
+  const out = { href: location.href, docTitle: document.title, jobs: [], samples: [], debug: {} }
+  const seen = new Set()
+  const norm = s =>
+    String(s || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const anchors = Array.from(
+    document.querySelectorAll('a[href*="/job/"], a[href*="#/job/"], a[href*="jobId"]')
+  )
+  for (const a of anchors) {
+    const href = a.href || ''
+    const m =
+      href.match(/\/job\/([\w-]+)/) ||
+      href.match(/#\/job\/([\w-]+)/) ||
+      href.match(/jobId=([\w-]+)/)
+    const title = norm(a.textContent || a.getAttribute('title') || '')
+    if (!m || !title || title.length > 120) continue
+    const id = m[1]
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.jobs.push({ job_id: id, title: title, url: href })
+  }
+  if (!out.jobs.length) {
+    out.samples = Array.from(document.querySelectorAll('a[href]'))
+      .slice(0, 40)
+      .map(a => ({ href: a.href.slice(0, 120), text: norm(a.textContent).slice(0, 60) }))
+    out.debug.bodyText = (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 1500)
+    out.debug.waf = /aliyun|acw|安全验证|verify|challenge/i.test(
+      document.title + ' ' + (document.body.innerText || '').slice(0, 300)
+    )
+    out.debug.listCands = Array.from(
+      document.querySelectorAll('[class*="job" i], [class*="position" i], [class*="post" i]')
+    )
+      .slice(0, 15)
+      .map(el => ({
+        cls: String(el.className || '').slice(0, 80),
+        text: norm(el.textContent).slice(0, 80),
+      }))
+  }
+  return out
+}
+
+async function bridgeExtractJobs(params) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const url = String(params.url || '').trim()
+  if (!url) throw Object.assign(new Error('缺少 url'), { code: -32600 })
+  // 1. 找同域 tab，没有则开新 tab
+  let host = ''
+  try {
+    host = new URL(url).host
+  } catch (e) {}
+  const tabs = await chrome.tabs.query({})
+  let target = tabs.find(t => t.url && host && t.url.includes(host))
+  if (!target || !target.id) {
+    target = await chrome.tabs.create({ url, active: true })
+    if (!target || !target.id) throw Object.assign(new Error('无法打开页面'), { code: -32002 })
+    await waitForTab(target.id)
+  } else if (target.url !== url && params.forceNavigate) {
+    await chrome.tabs.update(target.id, { url })
+    await waitForTab(target.id)
+  }
+  const tabId = target.id
+  try {
+    await chrome.tabs.update(tabId, { active: true })
+  } catch (e) {}
+
+  const runInPage = async (fn, args) => {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: fn,
+      args: args || [],
+      world: 'MAIN',
+    })
+    return r ? r.result : null
+  }
+  // 2. 等渲染/过 WAF：轮询抓取，找到岗位或超时
+  const t0 = Date.now()
+  let last = null
+  while (Date.now() - t0 < 30000) {
+    last = await runInPage(mpExtractJobs)
+    if (last && last.jobs && last.jobs.length) break
+    await sleep(2000)
+  }
+  return last || { jobs: [], debug: { timeout: true } }
+}
+
 async function dispatchXpress(action, payload) {
   let tabs = await chrome.tabs.query({
     url: ['https://www.xiaohongshu.com/*', 'https://creator.xiaohongshu.com/*'],
@@ -5483,6 +5573,15 @@ async function dispatchZhihuPin(action, payload) {
       await chrome.tabs.reload(target.id)
       await waitTabCompleteX(target.id)
       await new Promise(r => setTimeout(r, 2500))
+      return await run()
+    }
+    // 不在圈子页/按钮未就绪（例如刚发布完跳到动态流）：回到圈子页重试一次
+    if (/未找到圈子|圈子编辑器未弹出/.test(e.message ?? '')) {
+      try {
+        await chrome.tabs.update(target.id, { url: XPRESS_RING_URL })
+        await waitTabCompleteX(target.id)
+        await new Promise(r => setTimeout(r, 3000))
+      } catch {}
       return await run()
     }
     throw e
