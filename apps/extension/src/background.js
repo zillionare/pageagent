@@ -5602,7 +5602,11 @@ async function captureJobJson(tabId, baseUrl) {
       await chrome.tabs.reload(tabId)
     } catch (e2) {}
     const t0 = Date.now()
-    while (Date.now() - t0 < 20000) {
+    while (Date.now() - t0 < 25000) {
+      try {
+        await runInPage(mpAutoScroll)
+      } catch (e) {}
+      await sleep(500)
       await sleep(1500)
       const ids = Object.keys(reqs).filter(id => !reqs[id].done)
       if (!ids.length && Date.now() - t0 > 6000) continue
@@ -5709,9 +5713,20 @@ async function bridgeExtractJobs(params) {
   // A) 等渲染后直接找岗位锚点
   const t0 = Date.now()
   let direct = null
-  while (Date.now() - t0 < 30000) {
+  while (Date.now() - t0 < 45000) {
     try {
-      await runInPage(mpAutoScroll)
+      await runInPage(() => {
+        try {
+          window.scrollTo(0, 0)
+        } catch (e) {}
+        return null
+      })
+      for (let s = 0; s < 10; s++) {
+        try {
+          await runInPage(mpAutoScroll)
+        } catch (e) {}
+        await sleep(300)
+      }
     } catch (e) {}
     direct = await runInPage(mpExtractJobs)
     if (direct && direct.jobs && direct.jobs.length) return { ...direct, mode: 'direct' }
