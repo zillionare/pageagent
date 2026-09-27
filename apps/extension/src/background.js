@@ -5636,7 +5636,7 @@ async function captureJobJson(tabId, baseUrl) {
       if (jobs.length > 40) break
     }
     try {
-      chrome.debugger.onEvent.removeListener(onEvent)
+      chrome.debugger.onEvent.removeListener(onResp)
     } catch (e5) {}
   } finally {
     try {
@@ -5775,6 +5775,21 @@ async function bridgeExtractJobs(params) {
       await chrome.tabs.update(tabId, { url })
       await waitForTab(tabId)
       await sleep(1500)
+    }
+  }
+  // C) 网络 JSON 捕获（SPA/API/GraphQL 通用兜底）
+  if (!out.jobs.length) {
+    try {
+      const net = await captureJobJson(tabId, url)
+      if (net.jobs && net.jobs.length) {
+        out.jobs = net.jobs
+        out.mode = 'network'
+        out.network = net.meta
+      } else {
+        out.network = net.meta
+      }
+    } catch (e) {
+      out.network = { err: String((e && e.message) || e).slice(0, 120) }
     }
   }
   if (!out.jobs.length) out.debug.bodyText = cards && cards.bodyText
