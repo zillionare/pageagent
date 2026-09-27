@@ -4585,13 +4585,11 @@ async function probeWechatSourceUrl(params) {
           }))
         return {
           step: label,
-          dlgs: dlgs
-            .slice(0, 4)
-            .map(d => ({
-              cls: String(d.className).slice(0, 70),
-              text: (d.textContent || '').trim().slice(0, 60),
-              html: d.innerHTML.slice(0, 700),
-            })),
+          dlgs: dlgs.slice(0, 4).map(d => ({
+            cls: String(d.className).slice(0, 70),
+            text: (d.textContent || '').trim().slice(0, 60),
+            html: d.innerHTML.slice(0, 700),
+          })),
           urlIns,
         }
       }
@@ -4884,6 +4882,85 @@ function mpImagesFillTitle(title) {
   return { ok: !!ok, viaEditor: !!titleEditor, viaInput: !!titleInput }
 }
 
+async function mpImagesSetFiles(items) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const dt = new DataTransfer()
+  const log = []
+  for (const it of items) {
+    try {
+      const blob = await (await fetch(it.dataUrl)).blob()
+      const f = new File([blob], it.name || 'page.png', { type: blob.type || 'image/png' })
+      dt.items.add(f)
+      log.push(f.name)
+    } catch (e) {
+      log.push('ERR:' + ((e && e.message) || e))
+    }
+  }
+  const inputs = Array.from(document.querySelectorAll('input[type=file]'))
+  const input = inputs.find(el => /image/i.test(el.accept || '')) || inputs[0] || null
+  if (input) {
+    try {
+      input.files = dt.files
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      return {
+        via: 'file-input',
+        assigned: dt.files.length,
+        inputCls: String(input.className || '').slice(0, 60),
+        accept: input.accept || '',
+        log,
+      }
+    } catch (e) {
+      log.push('ASSIGN_ERR:' + ((e && e.message) || e))
+    }
+  }
+  const cands = Array.from(
+    document.querySelectorAll(
+      '[class*="upload" i], [class*="drag" i], [class*="add" i], [class*="pic" i]'
+    )
+  ).filter(vis)
+  const zone = cands.find(el => /上传|选择|拖|图片/.test(el.textContent || '')) || cands[0]
+  if (!zone) {
+    return {
+      via: 'none',
+      error: 'no-file-input-no-zone',
+      log,
+      inputs: inputs.map(i => ({
+        accept: i.accept || '',
+        cls: String(i.className || '').slice(0, 60),
+      })),
+    }
+  }
+  const rect = zone.getBoundingClientRect()
+  const opts = {
+    bubbles: true,
+    cancelable: true,
+    dataTransfer: dt,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+  }
+  for (const type of ['dragenter', 'dragover', 'drop']) {
+    try {
+      zone.dispatchEvent(new DragEvent(type, opts))
+    } catch {}
+    await sleep(200)
+  }
+  return {
+    via: 'drop',
+    zoneCls: String(zone.className || '').slice(0, 60),
+    assigned: dt.files.length,
+    log,
+  }
+}
+
 function mpImagesCount() {
   const vis = el => {
     try {
@@ -5021,140 +5098,17 @@ async function bridgePublishMpImages(params) {
   // 5. 标题
   if (title) dbg.title = await runInPage(mpImagesFillTitle, [title])
 
-  // 6. 上传图片：dataURL → chrome.downloads 落盘 → CDP setFileInputFiles
+  // 6. 上传图片：页面内 dataURL → File 注入上传框（不走 chrome.downloads，避免系统 Save 对话框）
   if (images.length) {
-    const paths = []
-    for (let i = 0; i < images.length; i++) {
-      try {
-        const dlId = await chrome.downloads.download({
-          url: images[i],
-          filename: `cf-mp-${Date.now()}-${i}.png`,
-          saveAs: false,
-        })
-        const t0 = Date.now()
-        for (;;) {
-          const [it] = await chrome.downloads.search({ id: dlId })
-          if (it && it.state === 'complete' && it.filename) {
-            paths.push(it.filename)
-            break
-          }
-          if (it && (it.state === 'interrupted' || it.error)) throw new Error(it.error || it.state)
-          if (Date.now() - t0 > 25000) throw new Error('下载超时')
-          await sleep(300)
-        }
-      } catch (e) {
-        dbg[`dl${i}Err`] = String((e && e.message) || e).slice(0, 120)
-      }
-    }
-    dbg.dlCount = paths.length
-    if (paths.length) {
-      try {
-        await chrome.debugger.attach({ tabId }, '1.3')
-        try {
-          await chrome.debugger.sendCommand({ tabId }, 'DOM.enable')
-          await chrome.debugger.sendCommand({ tabId }, 'Page.enable')
-          const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', { depth: 1 })
-          const q = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
-            nodeId: doc.root.nodeId,
-            selector: 'input[type=file]',
-          })
-          dbg.inputNodeId = (q && q.nodeId) || 0
-          if (q && q.nodeId) {
-            await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
-              files: paths,
-              nodeId: q.nodeId,
-            })
-            dbg.via = 'setFileInputFiles'
-          } else {
-            // 无 file input：点上传区 + 拦文件选择器
-            const pt =
-              dbg.env &&
-              dbg.env.uploadCands &&
-              dbg.env.uploadCands.find(c => c.vis && (c.text || '').length)
-            dbg.uploadPt = pt || null
-            await chrome.debugger.sendCommand({ tabId }, 'Page.setInterceptFileChooserDialog', {
-              enabled: true,
-            })
-            let chooser = null
-            const onEvent = (source, method, ev) => {
-              if (source.tabId === tabId && method === 'Page.fileChooserOpened') chooser = ev
-            }
-            chrome.debugger.onEvent.addListener(onEvent)
-            try {
-              const [{ result: rect }] = await chrome.scripting.executeScript({
-                target: { tabId },
-                func: () => {
-                  const vis = el => {
-                    try {
-                      const r = el.getBoundingClientRect()
-                      return r.width > 0 && r.height > 0
-                    } catch {
-                      return false
-                    }
-                  }
-                  const cands = Array.from(
-                    document.querySelectorAll(
-                      'button, div[class*="upload" i], div[class*="add" i], span[class*="upload" i]'
-                    )
-                  ).filter(vis)
-                  const el =
-                    cands.find(e => /上传|选择图片|图片/.test((e.textContent || '').trim())) ||
-                    cands[0]
-                  if (!el) return null
-                  el.scrollIntoView({ block: 'center' })
-                  const r = el.getBoundingClientRect()
-                  return {
-                    x: Math.round(r.left + r.width / 2),
-                    y: Math.round(r.top + r.height / 2),
-                  }
-                },
-                world: 'MAIN',
-              })
-              if (rect) {
-                for (const type of ['mousePressed', 'mouseReleased']) {
-                  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
-                    type,
-                    x: rect.x,
-                    y: rect.y,
-                    button: 'left',
-                    clickCount: 1,
-                  })
-                  await sleep(90)
-                }
-              }
-              const t1 = Date.now()
-              while (Date.now() - t1 < 5000 && !chooser) await sleep(200)
-              if (chooser) {
-                await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
-                  files: paths,
-                  backendNodeId: chooser.backendNodeId,
-                })
-                dbg.via = 'chooser'
-              } else {
-                dbg.chooserMiss = true
-              }
-            } finally {
-              try {
-                chrome.debugger.onEvent.removeListener(onEvent)
-              } catch {}
-            }
-          }
-        } finally {
-          try {
-            await chrome.debugger.detach({ tabId })
-          } catch {}
-        }
-      } catch (e) {
-        dbg.cdpErr = String((e && e.message) || e).slice(0, 200)
-      }
-    }
+    const items = images.map((d, i) => ({ dataUrl: d, name: `quantide-p${i + 1}.png` }))
+    dbg.inject = await runInPage(mpImagesSetFiles, [items])
     // 等上传完成（图片卡出现）
     const t2 = Date.now()
     let count = null
-    while (Date.now() - t2 < 30000) {
+    while (Date.now() - t2 < 45000) {
       await sleep(1200)
       count = await runInPage(mpImagesCount)
-      if (count && count.imgCount >= paths.length) break
+      if (count && count.imgCount >= images.length) break
     }
     dbg.afterUpload = count
   }
