@@ -4980,15 +4980,19 @@ async function mpImagesUploadDrop(items) {
 }
 
 function mpImagesUploadedCount() {
-  const inSel = document.querySelectorAll('.image-selector img, [class*="image-selector" i] img')
+  // 页面图片计数器形如 “n/20”（图像位）；描述位是 n/1000，别混
+  const matches = Array.from((document.body.innerText || '').matchAll(/(\d+)\s*\/\s*20\b/g)).map(
+    m => parseInt(m[1], 10)
+  )
+  const counter = matches.length ? Math.max.apply(null, matches) : 0
+  const inSel = document.querySelectorAll(
+    '.image-selector img, [class*="image-selector" i] img'
+  ).length
   const items = document.querySelectorAll(
     '.image-selector__item, .image-item, [class*="image-list" i] li, [class*="img-list" i] li'
-  )
-  const any = document.querySelectorAll(
-    'img[src^="https://mmbiz.qpic.cn"], img[src^="https://mmbiz.qlogo.cn"]'
-  )
-  const n = Math.max(inSel.length, items.length, any.length)
-  return { count: n, inSel: inSel.length, items: items.length, mmbiz: any.length }
+  ).length
+  const any = document.querySelectorAll('img[src*="qpic.cn"], img[src*="mmbiz"]').length
+  return { count: Math.max(counter, inSel, items, any), counter, inSel, items, mmbiz: any }
 }
 
 async function mpImagesPickCollection(name) {
@@ -5219,11 +5223,29 @@ async function bridgePublishMpImages(params) {
   }
 
   if (images.length) {
-    const items = images.map((d, i) => ({ dataUrl: d, name: `quantide-p${i + 1}.png` }))
+    const base = images.map((d, i) => ({ dataUrl: d, name: `quantide-p${i + 1}.png` }))
+    const waitNeed = async ms => {
+      const t0 = Date.now()
+      let c = null
+      while (Date.now() - t0 < ms) {
+        await sleep(1000)
+        c = await runInPage(mpImagesUploadedCount)
+        if (c && c.count >= images.length) return c
+      }
+      return c
+    }
+    // 幂等：每次只补 have..N（页面已上传的不再重复，避免 ×2）
+    let count = (await runInPage(mpImagesUploadedCount)) || { count: 0 }
+    const uploadNeed = async fn => {
+      const have = count ? count.count || 0 : 0
+      const need = images.length - have
+      if (need <= 0) return { skipped: true, have }
+      return await fn(base.slice(have))
+    }
     // 路由 A：直接给 webuploader 的 input[type=file] 赋值
-    dbg.uploadInput = await runInPage(mpImagesUploadInput, [items])
+    dbg.uploadInput = await uploadNeed(mpImagesUploadInput)
     await sleep(1500)
-    let count = await waitUpload(images.length, 12000)
+    count = await waitNeed(12000)
     if (!count || count.count < images.length) {
       // 路由 B：先点「Local upload」激活 webuploader picker，再赋值
       try {
@@ -5241,13 +5263,13 @@ async function bridgePublishMpImages(params) {
         })
       } catch (e) {}
       await sleep(1200)
-      dbg.uploadInput2 = await runInPage(mpImagesUploadInput, [items])
-      count = await waitUpload(images.length, 12000)
+      dbg.uploadInput2 = await uploadNeed(mpImagesUploadInput)
+      count = await waitNeed(12000)
     }
     if (!count || count.count < images.length) {
       // 路由 C：合成拖放到「Select or drag images」区
-      dbg.uploadDrop = await runInPage(mpImagesUploadDrop, [items])
-      count = await waitUpload(images.length, 12000)
+      dbg.uploadDrop = await uploadNeed(mpImagesUploadDrop)
+      count = await waitNeed(12000)
     }
     dbg.afterUpload = count
   }
