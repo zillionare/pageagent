@@ -4793,10 +4793,10 @@ async function bridgeProbeZhihuRing(params) {
 
 // 小红书图文多图发布（payload: {title, content, images[], tags[], mode}）
 // ===== 微信公众号「图片消息」发布（quantclaw）：CF loop 任务调用 =====
-// 流程：取 token → 打开 type=77 图片消息编辑器 → 填标题 → 上传分页多图 → 保存草稿（绝不点发表）
-// params: { title, images: [dataURL], desc?, probeOnly? }
+// 流程：取 token → 打开 type=77&createType=8 photo 编辑器 → 等就绪 → 标题 → 上传分页多图
+//       → 描述（标题列表）→ 原文链接 → 合集 → 保存草稿（绝不点发表）
+// 注意：MP 编辑器界面可能是英文（Save as draft / Select or drag images / Collection），文本匹配一律双语。
 
-// —— 页面主世界函数（executeScript 序列化，禁止引用外部作用域）——
 function mpImagesEnv() {
   const vis = el => {
     try {
@@ -4806,93 +4806,114 @@ function mpImagesEnv() {
       return false
     }
   }
-  const brief = el => ({
-    tag: el.tagName,
-    cls: String(el.className || '').slice(0, 90),
-    text: (el.textContent || '').trim().slice(0, 30),
-    vis: vis(el),
-  })
+  const title =
+    document.querySelector('[name="title"] .ProseMirror') ||
+    document.querySelector('.title-editor__input .ProseMirror')
+  const desc =
+    document.querySelector('.share-text__input .ProseMirror') ||
+    document.querySelector('.share-text__area .ProseMirror')
+  const input =
+    document.querySelector('.js_upload_btn_container input[type=file]') ||
+    document.querySelector('input[type=file][multiple]') ||
+    document.querySelector('input[type=file]')
+  const drop =
+    document.querySelector('.image-selector__add') || document.querySelector('.image-selector')
+  const saves = Array.from(
+    document.querySelectorAll('button, a, div[role="button"], .weui-desktop-btn')
+  ).filter(b =>
+    /保存为草稿|save as draft|save draft|save to draft/i.test((b.textContent || '').trim())
+  )
+  const colls = Array.from(document.querySelectorAll('div, span, a, button, label'))
+    .filter(vis)
+    .filter(
+      el =>
+        /合集|collection/i.test((el.textContent || '').trim()) &&
+        (el.textContent || '').trim().length <= 20
+    )
+    .slice(0, 8)
+    .map(el => ({
+      tag: el.tagName,
+      cls: String(el.className || '').slice(0, 70),
+      text: (el.textContent || '').trim().slice(0, 24),
+    }))
   return {
     href: location.href,
-    titleInputs: Array.from(
-      document.querySelectorAll(
-        '#title, textarea[placeholder*="标题"], input[placeholder*="标题"], .title-editor__input .ProseMirror'
-      )
-    ).map(brief),
-    fileInputs: Array.from(document.querySelectorAll('input[type=file]')).map(el => ({
-      accept: el.accept,
-      multiple: !!el.multiple,
-      cls: String(el.className || '').slice(0, 80),
-      vis: vis(el),
-    })),
-    uploadCands: Array.from(
-      document.querySelectorAll(
-        'button, a, div[class*="upload" i], div[class*="add" i], span[class*="upload" i]'
-      )
-    )
-      .filter(vis)
-      .map(brief)
-      .filter(o => o.text || /upload|add/i.test(o.cls))
-      .slice(0, 40),
-    prosemirror: Array.from(document.querySelectorAll('.ProseMirror')).map(el => ({
-      cls: String(el.className || '').slice(0, 60),
-      len: (el.textContent || '').length,
-      vis: vis(el),
-    })),
-    bodyHead: (document.body.innerText || '').slice(0, 300),
+    title: title ? { len: (title.textContent || '').length } : null,
+    desc: desc ? { len: (desc.textContent || '').length } : null,
+    fileInput: input
+      ? {
+          accept: input.accept || '',
+          cls: String(input.className || '').slice(0, 60),
+          vis: vis(input),
+        }
+      : null,
+    dropzone: drop ? { cls: String(drop.className || '').slice(0, 60) } : null,
+    saveBtns: saves.map(b => (b.textContent || '').trim().slice(0, 24)),
+    collectionCands: colls,
+    bodyHead: (document.body.innerText || '').slice(0, 200),
   }
 }
 
 function mpImagesFillTitle(title) {
-  const vis = el => {
+  const el =
+    document.querySelector('[name="title"] .ProseMirror') ||
+    document.querySelector('.title-editor__input .ProseMirror')
+  if (!el) return { ok: false, error: 'no-title-editor' }
+  if ((el.textContent || '').trim() === title) return { ok: true, via: 'already' }
+  try {
+    el.focus()
+  } catch {}
+  try {
+    document.execCommand('selectAll', false, null)
+    document.execCommand('insertText', false, title)
+  } catch {}
+  if (!(el.textContent || '').trim()) {
+    el.textContent = title
     try {
-      const r = el.getBoundingClientRect()
-      return r.width > 0 && r.height > 0
+      el.dispatchEvent(
+        new InputEvent('input', { bubbles: true, inputType: 'insertText', data: title })
+      )
     } catch {
-      return false
+      el.dispatchEvent(new Event('input', { bubbles: true }))
     }
   }
-  let titleEditor =
-    Array.from(document.querySelectorAll('.title-editor__input .ProseMirror')).find(vis) || null
-  let titleInput =
-    Array.from(
-      document.querySelectorAll('#title, textarea[placeholder*="标题"], input[placeholder*="标题"]')
-    ).find(vis) || null
-  if (!titleEditor && !titleInput) return { ok: false, error: '未找到标题输入' }
-  if (titleEditor) {
-    titleEditor.focus()
-    titleEditor.textContent = title
-    titleEditor.dispatchEvent(new Event('input', { bubbles: true }))
-    titleEditor.dispatchEvent(new Event('change', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return {
+    ok: (el.textContent || '').trim() === title,
+    text: (el.textContent || '').trim().slice(0, 24),
   }
-  if (titleInput) {
-    titleInput.focus()
-    const proto =
-      titleInput.tagName === 'TEXTAREA'
-        ? window.HTMLTextAreaElement.prototype
-        : window.HTMLInputElement.prototype
-    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
-    if (setter) setter.call(titleInput, title)
-    else titleInput.value = title
-    titleInput.dispatchEvent(new Event('input', { bubbles: true }))
-    titleInput.dispatchEvent(new Event('change', { bubbles: true }))
-  }
-  const ok =
-    (titleInput && titleInput.value === title) ||
-    (titleEditor && (titleEditor.textContent || '').trim() === title)
-  return { ok: !!ok, viaEditor: !!titleEditor, viaInput: !!titleInput }
 }
 
-async function mpImagesSetFiles(items) {
-  const sleep = ms => new Promise(r => setTimeout(r, ms))
-  const vis = el => {
-    try {
-      const r = el.getBoundingClientRect()
-      return r.width > 0 && r.height > 0
-    } catch {
-      return false
-    }
+function mpImagesSetDesc(html, text) {
+  const el =
+    document.querySelector('.share-text__input .ProseMirror') ||
+    document.querySelector('.share-text__area .ProseMirror')
+  if (!el) return { ok: false, error: 'no-desc-editor' }
+  try {
+    el.focus()
+  } catch {}
+  try {
+    const dt = new DataTransfer()
+    dt.setData('text/html', html)
+    dt.setData('text/plain', text)
+    el.dispatchEvent(
+      new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt })
+    )
+  } catch (e) {
+    /* fallthrough */
   }
+  let len = (el.textContent || '').trim().length
+  if (len < 5) {
+    try {
+      el.innerHTML = html
+      el.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    } catch (e2) {}
+    len = (el.textContent || '').trim().length
+  }
+  return { ok: len > 0, len }
+}
+
+async function mpImagesBuildFiles(items) {
   const dt = new DataTransfer()
   const log = []
   for (const it of items) {
@@ -4905,90 +4926,63 @@ async function mpImagesSetFiles(items) {
       log.push('ERR:' + ((e && e.message) || e))
     }
   }
-  const inputs = Array.from(document.querySelectorAll('input[type=file]'))
-  const input = inputs.find(el => /image/i.test(el.accept || '')) || inputs[0] || null
-  if (input) {
-    try {
-      input.files = dt.files
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      input.dispatchEvent(new Event('change', { bubbles: true }))
-      return {
-        via: 'file-input',
-        assigned: dt.files.length,
-        inputCls: String(input.className || '').slice(0, 60),
-        accept: input.accept || '',
-        log,
-      }
-    } catch (e) {
-      log.push('ASSIGN_ERR:' + ((e && e.message) || e))
-    }
+  return { dt, log }
+}
+
+async function mpImagesUploadInput(items) {
+  const { dt, log } = await mpImagesBuildFiles(items)
+  const input =
+    document.querySelector('.js_upload_btn_container input[type=file]') ||
+    document.querySelector('input[type=file][multiple]') ||
+    document.querySelector('input[type=file]')
+  if (!input) return { via: 'input-missing', log }
+  try {
+    input.files = dt.files
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    return { via: 'input', assigned: dt.files.length, log }
+  } catch (e) {
+    return { via: 'input', assigned: 0, err: String((e && e.message) || e), log }
   }
-  const cands = Array.from(
-    document.querySelectorAll(
-      '[class*="upload" i], [class*="drag" i], [class*="add" i], [class*="pic" i]'
-    )
-  ).filter(vis)
-  const zone = cands.find(el => /上传|选择|拖|图片/.test(el.textContent || '')) || cands[0]
-  if (!zone) {
-    return {
-      via: 'none',
-      error: 'no-file-input-no-zone',
-      log,
-      inputs: inputs.map(i => ({
-        accept: i.accept || '',
-        cls: String(i.className || '').slice(0, 60),
-      })),
-    }
-  }
-  const rect = zone.getBoundingClientRect()
+}
+
+async function mpImagesUploadDrop(items) {
+  const { dt, log } = await mpImagesBuildFiles(items)
+  const zone =
+    document.querySelector('.image-selector__add') ||
+    document.querySelector('.image-selector') ||
+    document.querySelector('.ProseMirror')
+  if (!zone) return { via: 'dropzone-missing', log }
+  try {
+    zone.scrollIntoView({ block: 'center' })
+  } catch {}
+  const r = zone.getBoundingClientRect()
   const opts = {
     bubbles: true,
     cancelable: true,
     dataTransfer: dt,
-    clientX: rect.left + rect.width / 2,
-    clientY: rect.top + rect.height / 2,
+    clientX: Math.round(r.left + r.width / 2),
+    clientY: Math.round(r.top + r.height / 2),
   }
   for (const type of ['dragenter', 'dragover', 'drop']) {
     try {
       zone.dispatchEvent(new DragEvent(type, opts))
-    } catch {}
-    await sleep(200)
+    } catch (e) {}
+    await new Promise(res => setTimeout(res, 250))
   }
-  return {
-    via: 'drop',
-    zoneCls: String(zone.className || '').slice(0, 60),
-    assigned: dt.files.length,
-    log,
-  }
+  return { via: 'drop', assigned: dt.files.length, log }
 }
 
-function mpImagesCount() {
-  const vis = el => {
-    try {
-      const r = el.getBoundingClientRect()
-      return r.width > 0 && r.height > 0
-    } catch {
-      return false
-    }
-  }
-  const imgs = Array.from(document.querySelectorAll('img'))
-    .filter(vis)
-    .filter(
-      el =>
-        ((el.src || '').startsWith('http') || (el.src || '').startsWith('blob:')) &&
-        (el.naturalWidth || 0) > 60
-    )
-  const cards = Array.from(
-    document.querySelectorAll(
-      '[class*="img" i], [class*="pic" i], [class*="upload" i], [class*="image" i]'
-    )
-  ).filter(vis)
-  return {
-    imgCount: imgs.length,
-    srcHeads: imgs.slice(0, 24).map(el => String(el.src || '').slice(0, 50)),
-    cardCount: cards.length,
-    textTail: (document.body.innerText || '').slice(-240),
-  }
+function mpImagesUploadedCount() {
+  const inSel = document.querySelectorAll('.image-selector img, [class*="image-selector" i] img')
+  const items = document.querySelectorAll(
+    '.image-selector__item, .image-item, [class*="image-list" i] li, [class*="img-list" i] li'
+  )
+  const any = document.querySelectorAll(
+    'img[src^="https://mmbiz.qpic.cn"], img[src^="https://mmbiz.qlogo.cn"]'
+  )
+  const n = Math.max(inSel.length, items.length, any.length)
+  return { count: n, inSel: inSel.length, items: items.length, mmbiz: any.length }
 }
 
 async function mpImagesPickCollection(name) {
@@ -5011,7 +5005,7 @@ async function mpImagesPickCollection(name) {
   const cands = Array.from(document.querySelectorAll('div, span, a, button, label')).filter(vis)
   const entry = cands.find(el => {
     const t = (el.textContent || '').trim()
-    return t.length <= 12 && /合集/.test(t) && el.children.length <= 2
+    return t.length <= 16 && /合集|collection/i.test(t) && el.children.length <= 2
   })
   dbg.entryText = entry ? (entry.textContent || '').trim() : null
   if (!entry) return { ok: false, err: 'no-collection-entry', dbg }
@@ -5026,7 +5020,7 @@ async function mpImagesPickCollection(name) {
   const itemsOf = () =>
     Array.from(
       document.querySelectorAll(
-        'li, div[role="option"], [class*="option" i], [class*="dropdown" i] li, [class*="list" i] > div'
+        'li, div[role="option"], [class*="option" i], [class*="dropdown" i] li, [class*="list" i] > div, [class*="select" i] div'
       )
     )
       .filter(vis)
@@ -5050,7 +5044,7 @@ async function mpImagesPickCollection(name) {
         if (desc && desc.set) desc.set.call(box, name)
         else box.value = name
         box.dispatchEvent(new Event('input', { bubbles: true }))
-      } catch {}
+      } catch (e) {}
       await sleep(1200)
       items = itemsOf()
       dbg.candsAfterSearch = items
@@ -5080,13 +5074,18 @@ function mpImagesSaveDraft() {
         return false
       }
     }
-    const btn = Array.from(document.querySelectorAll('button, a, div[role="button"]')).find(
-      b => (b.textContent || '').trim().includes('保存为草稿') && vis(b)
-    )
-    if (!btn) return { success: false, error: '未找到保存为草稿按钮' }
+    const re = /保存为草稿|save as draft|save draft|save to draft/i
+    const btn =
+      Array.from(
+        document.querySelectorAll('button, a, div[role="button"], .weui-desktop-btn')
+      ).find(b => re.test((b.textContent || '').trim()) && vis(b)) ||
+      Array.from(
+        document.querySelectorAll('button, a, div[role="button"], .weui-desktop-btn')
+      ).find(b => re.test((b.textContent || '').trim()))
+    if (!btn) return { success: false, error: 'no-save-button' }
     try {
       btn.click()
-    } catch {}
+    } catch (e) {}
     const t0 = Date.now()
     while (Date.now() - t0 < 15000) {
       const nodes = Array.from(
@@ -5095,12 +5094,12 @@ function mpImagesSaveDraft() {
         )
       )
       const hit = nodes.find(
-        n => vis(n) && /保存成功|已保存|草稿保存成功/.test(n.textContent || '')
+        n => vis(n) && /保存成功|已保存|草稿保存成功|saved|success/i.test(n.textContent || '')
       )
       if (hit) return { success: true, via: 'toast' }
       await sleep(700)
     }
-    return { success: false, error: '保存提示未出现（可能仍在保存）' }
+    return { success: false, error: 'save-toast-timeout' }
   })()
 }
 
@@ -5113,7 +5112,6 @@ async function bridgePublishMpImages(params) {
   const title = String(params.title || '').trim()
   const desc = String(params.desc || '').trim()
 
-  // 1. 找/开公众号后台 tab
   let tabs = await chrome.tabs.query({ url: ['https://mp.weixin.qq.com/*'] })
   tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
   let target = tabs[0]
@@ -5130,7 +5128,6 @@ async function bridgePublishMpImages(params) {
   } catch {}
   const tabId = target.id
 
-  // 2. token
   const [{ result: token }] = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
@@ -5154,11 +5151,9 @@ async function bridgePublishMpImages(params) {
     })
   dbg.tokenTail = String(token).slice(-4)
 
-  // 3. 打开图片消息编辑器（type=77）
   const editorUrl = `https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&isNew=1&type=77&createType=8&token=${token}&lang=en_US`
   await chrome.tabs.update(tabId, { url: editorUrl })
   await waitForTab(tabId)
-  await sleep(2500)
 
   const runInPage = async (fn, args) => {
     const [r] = await chrome.scripting.executeScript({
@@ -5170,62 +5165,55 @@ async function bridgePublishMpImages(params) {
     return r ? r.result : null
   }
 
-  // 4. 环境探测
-  dbg.env = await runInPage(mpImagesEnv)
-  if (params.probeOnly) return { ok: true, probeOnly: true, env: dbg.env }
+  // 等编辑器就绪（标题或上传 input 出现），最多 20s
+  const tReady = Date.now()
+  let ready = null
+  while (Date.now() - tReady < 20000) {
+    ready = await runInPage(mpImagesEnv)
+    if (ready && (ready.title || ready.fileInput || ready.dropzone)) break
+    await sleep(900)
+  }
+  dbg.ready = ready
+  if (params.probeOnly) return { ok: true, probeOnly: true, env: ready }
 
-  // 5. 标题
-  if (title) dbg.title = await runInPage(mpImagesFillTitle, [title])
+  if (title) {
+    dbg.title = await runInPage(mpImagesFillTitle, [title])
+    await sleep(400)
+  }
 
-  // 6. 上传图片：页面内 dataURL → File 注入上传框（不走 chrome.downloads，避免系统 Save 对话框）
+  const waitUpload = async (want, ms) => {
+    const t0 = Date.now()
+    let c = null
+    while (Date.now() - t0 < ms) {
+      await sleep(1000)
+      c = await runInPage(mpImagesUploadedCount)
+      if (c && c.count >= want) return c
+    }
+    return c
+  }
+
   if (images.length) {
     const items = images.map((d, i) => ({ dataUrl: d, name: `quantide-p${i + 1}.png` }))
-    dbg.inject = await runInPage(mpImagesSetFiles, [items])
-    // 等上传完成（图片卡出现）
-    const t2 = Date.now()
-    let count = null
-    while (Date.now() - t2 < 45000) {
-      await sleep(1200)
-      count = await runInPage(mpImagesCount)
-      if (count && count.imgCount >= images.length) break
+    dbg.uploadInput = await runInPage(mpImagesUploadInput, [items])
+    await sleep(1500)
+    let count = await waitUpload(images.length, 15000)
+    if (!count || count.count < images.length) {
+      dbg.uploadDrop = await runInPage(mpImagesUploadDrop, [items])
+      count = await waitUpload(images.length, 15000)
     }
     dbg.afterUpload = count
   }
 
-  // 7. 描述（可选字段，找不到就跳过）
   if (desc) {
-    try {
-      dbg.desc = await runInPage(
-        d => {
-          const vis = el => {
-            try {
-              const r = el.getBoundingClientRect()
-              return r.width > 0 && r.height > 0
-            } catch {
-              return false
-            }
-          }
-          const el = Array.from(
-            document.querySelectorAll(
-              'textarea[placeholder*="描述"], #js_description, textarea.js_desc'
-            )
-          ).find(vis)
-          if (!el) return { ok: false, error: 'no-desc-field' }
-          const proto = window.HTMLTextAreaElement.prototype
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set
-          if (setter) setter.call(el, d)
-          else el.value = d
-          el.dispatchEvent(new Event('input', { bubbles: true }))
-          return { ok: true }
-        },
-        [desc]
-      )
-    } catch (e) {
-      dbg.descErr = String((e && e.message) || e).slice(0, 120)
-    }
+    const lines = desc
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+    const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const html = lines.map(l => `<p>${esc(l)}</p>`).join('')
+    dbg.desc = await runInPage(mpImagesSetDesc, [html, desc])
   }
 
-  // 8. 原文链接（复用图文 CDP 方案：真实点击+逐字键入+popover 确定）
   if (params.blogUrl) {
     try {
       dbg.sourceUrl = await setWechatSourceUrlViaCDP(tabId, String(params.blogUrl), chrome)
@@ -5235,7 +5223,6 @@ async function bridgePublishMpImages(params) {
     await sleep(800)
   }
 
-  // 9. 合集（如 QUANT LOOP）
   if (params.collection) {
     try {
       dbg.collection = await runInPage(mpImagesPickCollection, [String(params.collection)])
@@ -5245,7 +5232,6 @@ async function bridgePublishMpImages(params) {
     await sleep(500)
   }
 
-  // 10. 保存草稿
   await sleep(600)
   dbg.save = await runInPage(mpImagesSaveDraft)
 
@@ -5254,7 +5240,7 @@ async function bridgePublishMpImages(params) {
     ok,
     drafted: ok,
     titleFilled: !!(dbg.title && dbg.title.ok),
-    uploaded: (dbg.afterUpload && dbg.afterUpload.imgCount) || 0,
+    uploaded: (dbg.afterUpload && dbg.afterUpload.count) || 0,
     message: ok
       ? '公众号图片消息已保存为草稿，请人工发表'
       : (dbg.save && dbg.save.error) || '保存草稿失败',
