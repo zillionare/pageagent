@@ -5413,15 +5413,25 @@ function mpExtractJobs() {
     String(s || '')
       .replace(/\s+/g, ' ')
       .trim()
-  const anchors = Array.from(
-    document.querySelectorAll('a[href*="/job/"], a[href*="#/job/"], a[href*="jobId"]')
-  )
+  const patterns = [
+    /\/job\/([\w-]+)/,
+    /#\/job\/([\w-]+)/,
+    /jobId=([\w-]+)/,
+    /career-listing\/\?id=(\d+)/,
+    /\/careers\/[\w%.\-]*-([0-9]{3,})\/?(?:$|[?#])/,
+    /JobDetail\/[^/]+\/(\d+)/,
+    /gh_jid=(\d+)/,
+    /\/jobs?\/[\w%\-]+-([0-9]{4,})\/?(?:$|[?#])/,
+    /\/jobs?\/([\w-]{6,})\/?(?:$|[?#])/,
+  ]
+  const anchors = Array.from(document.querySelectorAll('a[href]')).slice(0, 3000)
   for (const a of anchors) {
     const href = a.href || ''
-    const m =
-      href.match(/\/job\/([\w-]+)/) ||
-      href.match(/#\/job\/([\w-]+)/) ||
-      href.match(/jobId=([\w-]+)/)
+    let m = null
+    for (const re of patterns) {
+      m = href.match(re)
+      if (m) break
+    }
     const title = norm(a.textContent || a.getAttribute('title') || '')
     if (!m || !title || title.length > 120) continue
     const id = m[1]
@@ -5430,9 +5440,11 @@ function mpExtractJobs() {
     out.jobs.push({ job_id: id, title: title, url: href })
   }
   if (!out.jobs.length) {
-    out.samples = Array.from(document.querySelectorAll('a[href]'))
-      .slice(0, 40)
-      .map(a => ({ href: a.href.slice(0, 120), text: norm(a.textContent).slice(0, 60) }))
+    out.samples = anchors
+      .slice(0, 80)
+      .map(a => ({ href: a.href.slice(0, 130), text: norm(a.textContent).slice(0, 50) }))
+      .filter(x => x.href && x.text)
+      .slice(0, 30)
     out.debug.bodyText = (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 1500)
     out.debug.waf = /aliyun|acw|安全验证|verify|challenge/i.test(
       document.title + ' ' + (document.body.innerText || '').slice(0, 300)
@@ -5556,6 +5568,9 @@ async function bridgeExtractJobs(params) {
     await sleep(1500)
   }
   if (!out.jobs.length) out.debug.bodyText = cards && cards.bodyText
+  const direct2 = await runInPage(mpExtractJobs)
+  if (direct2 && direct2.samples && direct2.samples.length)
+    out.debug.samples = direct2.samples.slice(0, 20)
   return out
 }
 
