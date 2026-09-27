@@ -4980,19 +4980,41 @@ async function mpImagesUploadDrop(items) {
 }
 
 function mpImagesUploadedCount() {
-  // 页面图片计数器形如 “n/20”（图像位）；描述位是 n/1000，别混
-  const matches = Array.from((document.body.innerText || '').matchAll(/(\d+)\s*\/\s*20\b/g)).map(
-    m => parseInt(m[1], 10)
-  )
-  const counter = matches.length ? Math.max.apply(null, matches) : 0
-  const inSel = document.querySelectorAll(
-    '.image-selector img, [class*="image-selector" i] img'
-  ).length
+  // 只认编辑器自己的图片计数器（精确文本 n/20 的最小元素）；
+  // 不要数页面上的 img（头像/图标/历史缩略图也含 qpic/mmbiz，会误判成已上传）
+  let counter = 0
+  for (const el of document.querySelectorAll('span, div, em, i, b')) {
+    if (el.children.length) continue
+    const m = (el.textContent || '').trim().match(/^(\d+)\s*\/\s*20$/)
+    if (m) counter = Math.max(counter, parseInt(m[1], 10))
+  }
   const items = document.querySelectorAll(
     '.image-selector__item, .image-item, [class*="image-list" i] li, [class*="img-list" i] li'
   ).length
-  const any = document.querySelectorAll('img[src*="qpic.cn"], img[src*="mmbiz"]').length
-  return { count: Math.max(counter, inSel, items, any), counter, inSel, items, mmbiz: any }
+  return { count: Math.max(counter, items), counter, items }
+}
+
+function mpImagesDialogText() {
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const ds = Array.from(
+    document.querySelectorAll(
+      '.weui-desktop-dialog, [role="dialog"], .weui-desktop-toast, [class*="toast" i], [class*="tips" i], [class*="popover" i]'
+    )
+  )
+    .filter(vis)
+    .map(el => (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160))
+    .filter(Boolean)
+  return {
+    dialogs: ds.slice(0, 6),
+    bodyTail: (document.body.innerText || '').replace(/\s+/g, ' ').slice(-260),
+  }
 }
 
 async function mpImagesPickCollection(name) {
@@ -5272,6 +5294,11 @@ async function bridgePublishMpImages(params) {
       count = await waitNeed(12000)
     }
     dbg.afterUpload = count
+    if (!count || count.count < images.length) {
+      try {
+        dbg.uploadDiag = await runInPage(mpImagesDialogText)
+      } catch (e) {}
+    }
   }
 
   if (desc) {
