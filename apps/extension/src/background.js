@@ -4276,6 +4276,7 @@ async function handleBridgeRequest(method, params) {
   if (method === 'publish_ring_pin') return await dispatchZhihuPin('publish_ring_pin', params ?? {})
   if (method === 'publish_mp_images') return await bridgePublishMpImages(params ?? {})
   if (method === 'extract_jobs') return await bridgeExtractJobs(params ?? {})
+  if (method === 'extract_job_detail') return await bridgeExtractJobDetail(params ?? {})
   throw Object.assign(new Error('未知方法 ' + method), { code: -32601 })
 }
 
@@ -5546,6 +5547,106 @@ async function bridgeExtractJobs(params) {
   }
   if (!out.jobs.length) out.debug.bodyText = cards && cards.bodyText
   return out
+}
+
+// ===== 岗位详情提取（quantclaw）：mokahr 岗位详情页 JD + 发布日期 =====
+function mpExtractJobDetail() {
+  const norm = s =>
+    String(s || '')
+      .replace(/\r/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  const vis = el => {
+    try {
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    } catch {
+      return false
+    }
+  }
+  const bodyText = norm(document.body.innerText || '')
+  const m = bodyText.match(/(?:发布于|发布时间|更新时间|更新于)[：:\s]*(\d{4}-\d{2}-\d{2})/)
+  const posted_at = m ? m[1] : ''
+  let title = ''
+  const h1 = document.querySelector(
+    'h1, [class*="job-title" i], [class*="position-title" i], [class*="jobName" i]'
+  )
+  if (h1) title = norm(h1.textContent).slice(0, 120)
+  // JD：取「自身贡献文本最多」的可见容器（排除导航/页脚）
+  let best = null
+  let bestOwn = 0
+  for (const el of document.querySelectorAll('div, section, article, main')) {
+    if (el.closest('nav, header, footer, script, style')) continue
+    if (!vis(el)) continue
+    const t = norm(el.innerText || '')
+    if (t.length < 60) continue
+    let childMax = 0
+    for (const ch of el.children) {
+      const ct = norm(ch.innerText || '')
+      if (ct.length > childMax) childMax = ct.length
+    }
+    const own = t.length - childMax
+    if (own > bestOwn) {
+      bestOwn = own
+      best = el
+    }
+  }
+  const description = best ? norm(best.innerText).slice(0, 8000) : ''
+  const out = { href: location.href, title, posted_at, description, len: description.length }
+  if (description.length < 80) {
+    out.samples = Array.from(document.querySelectorAll('div, section'))
+      .filter(vis)
+      .map(el => ({
+        cls: String(el.className || '').slice(0, 70),
+        len: (el.innerText || '').length,
+      }))
+      .filter(x => x.len > 60)
+      .sort((a, b) => b.len - a.len)
+      .slice(0, 12)
+    out.bodyText = bodyText.slice(0, 1500)
+  }
+  return out
+}
+
+async function bridgeExtractJobDetail(params) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const url = String(params.url || '').trim()
+  if (!url) throw Object.assign(new Error('缺少 url'), { code: -32600 })
+  let host = ''
+  try {
+    host = new URL(url).host
+  } catch (e) {}
+  const tabs = await chrome.tabs.query({})
+  let target = tabs.find(t => t.url && host && t.url.includes(host))
+  if (!target || !target.id) {
+    target = await chrome.tabs.create({ url, active: true })
+    if (!target || !target.id) throw Object.assign(new Error('无法打开页面'), { code: -32002 })
+    await waitForTab(target.id)
+  } else {
+    await chrome.tabs.update(target.id, { url })
+    await waitForTab(target.id)
+  }
+  const tabId = target.id
+  try {
+    await chrome.tabs.update(tabId, { active: true })
+  } catch (e) {}
+  const runInPage = async (fn, args) => {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: fn,
+      args: args || [],
+      world: 'MAIN',
+    })
+    return r ? r.result : null
+  }
+  const t0 = Date.now()
+  let last = null
+  while (Date.now() - t0 < 25000) {
+    last = await runInPage(mpExtractJobDetail)
+    if (last && last.description && last.description.length >= 80) break
+    await sleep(2000)
+  }
+  return last || { description: '', debug: { timeout: true } }
 }
 
 async function dispatchXpress(action, payload) {
