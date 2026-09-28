@@ -55,10 +55,12 @@ async function refreshOccupant() {
     if (!occ && lastHealth && lastHealth.connected && !myConn && lastHealth.occupant) {
       occ = String(lastHealth.occupant)
     }
-    const st2 = await chrome.storage.sync.get({ pageagent_occupant_role: '' })
-    if (occ && box && txt) {
-      const rl = st2.pageagent_occupant_role ? `（${st2.pageagent_occupant_role} 席位）` : ''
-      txt.textContent = `桥${rl}被占用：${occ} 正在连接。要在此机器接管（踢掉对方）吗？`
+    // 仅检测「当前所选角色」的席位占用（另一角色不影响）
+    const sel = document.getElementById('roleSel')?.value || ''
+    const occRole = lastHealth?.occupants?.[sel] || null
+    const mySeatConn = !!st.pageagent_connected && String(st.pageagent_connected_role || '') === sel
+    if (occRole && box && txt && !mySeatConn) {
+      txt.textContent = `${sel} 席位被 ${occRole.peer} 占用。要在此机器接管（踢掉对方）吗？`
       box.style.display = 'block'
     } else if (box) {
       box.style.display = 'none'
@@ -102,15 +104,9 @@ async function refreshRole() {
 
 document.getElementById('roleLogin')?.addEventListener('click', async () => {
   const role = document.getElementById('roleSel')?.value || 'writer'
-  const pwd = (document.getElementById('rolePwd')?.value || '').trim()
-  const el = document.getElementById('roleStatus')
-  if (!pwd) {
-    if (el) el.textContent = '请输入口令'
-    return
-  }
   await chrome.storage.sync.set({
     pageagent_role: role,
-    pageagent_pwd: pwd,
+    pageagent_pwd: '',
     pageagent_disconnected: false,
     pageagent_bridge_error: '',
   })
@@ -121,6 +117,7 @@ document.getElementById('roleLogin')?.addEventListener('click', async () => {
       'pageagent_kicked_role',
     ])
   } catch {}
+  const el = document.getElementById('roleStatus')
   if (el) el.textContent = `正在以 ${role} 登录…`
   setTimeout(refreshRole, 1500)
 })
@@ -144,9 +141,15 @@ document.getElementById('roleLogout')?.addEventListener('click', async () => {
 
 document.getElementById('takeover')?.addEventListener('click', async () => {
   const txt = document.getElementById('occupantText')
-  if (txt) txt.textContent = '正在接管（踢掉对方）…'
+  const sel = document.getElementById('roleSel')?.value || 'writer'
+  if (txt) txt.textContent = `正在以 ${sel} 接管（踢掉同角色对方）…`
   try {
-    await chrome.storage.sync.set({ pageagent_force_takeover: Date.now() })
+    await chrome.storage.sync.set({
+      pageagent_role: sel,
+      pageagent_pwd: '',
+      pageagent_disconnected: false,
+      pageagent_force_takeover: Date.now(),
+    })
   } catch {}
   setTimeout(async () => {
     await refresh()
