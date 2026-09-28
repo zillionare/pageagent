@@ -4662,51 +4662,77 @@ async function bridgeCrawlArticle(params) {
     tabId = tabs[0]?.id ?? null
   }
   if (!tabId) throw Object.assign(new Error('没有可用标签页'), { code: -32002 })
+  const _extractCrawl = async () => {
+    const _res = await chrome.scripting
+      .executeScript({
+        target: { tabId },
+        func: function () {
+          var pick = function () {
+            var cands = Array.from(
+              document.querySelectorAll('article, main, [role="main"], .content, .post, .article')
+            )
+            if (cands.length) {
+              cands.sort(function (a, b) {
+                return (b.textContent || '').length - (a.textContent || '').length
+              })
+              return cands[0]
+            }
+            return document.body
+          }
+          var root = pick()
+          var lines = []
+          var walk = function (el) {
+            for (var i = 0; i < el.childNodes.length; i++) {
+              var n = el.childNodes[i]
+              if (n.nodeType === 3) {
+                var t = String(n.textContent || '')
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                if (t) lines.push(t)
+              } else if (n.nodeType !== 1) continue
+              var tag = String(n.tagName || n.localName || '').toLowerCase()
+              if (/^(script|style|nav|header|footer|aside|form|button)$/.test(tag)) continue
+              if (/^h[1-3]$/.test(tag)) {
+                var lvl = Number(tag.charAt(1))
+                lines.push(new Array(lvl + 1).join('#') + ' ' + String(n.textContent || '').trim())
+              } else if (tag === 'li') lines.push('- ' + String(n.textContent || '').trim())
+              else if (tag === 'img' && n.src) lines.push('![](' + n.src + ')')
+              else if (tag === 'a' && n.href)
+                lines.push('[' + String(n.textContent || '').trim() + '](' + n.href + ')')
+              else if (tag === 'pre')
+                lines.push('```\n' + String(n.textContent || '').trim() + '\n```')
+              else walk(n)
+            }
+          }
+          walk(root)
+          return {
+            title: document.title,
+            url: location.href,
+            markdown: lines.filter(Boolean).join('\n\n'),
+          }
+        },
+      })
+      .catch(e => ({ __err: String((e && e.message) || e) }))
+    if (_res?.__err) return { __err: _res.__err }
+    return _res?.[0]?.result ?? null
+  }
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => {
-        // Readability 风格抽取：找最大文本块容器
-        const pick = () => {
-          const cands = Array.from(
-            document.querySelectorAll('article, main, [role="main"], .content, .post, .article')
-          )
-          if (cands.length) {
-            cands.sort((a, b) => (b.textContent?.length ?? 0) - (a.textContent?.length ?? 0))
-            return cands[0]
-          }
-          return document.body
-        }
-        const root = pick()
-        // 粗转 markdown：h1-h3/p/li/img/a/code
-        const lines = []
-        const walk = el => {
-          for (const n of el.childNodes) {
-            if (n.nodeType === 3) {
-              const t = (n.textContent ?? '').replace(/\s+/g, ' ').trim()
-              if (t) lines.push(t)
-            } else if (n.nodeType !== 1) continue
-            const tag = n.tagName.toLowerCase()
-            if (/^(script|style|nav|header|footer|aside|form|button)$/.test(tag)) continue
-            if (/^h([1-3])$/.test(tag))
-              lines.push('#'.repeat(Number(tag[1])) + ' ' + (n.textContent ?? '').trim())
-            else if (tag === 'li') lines.push('- ' + (n.textContent ?? '').trim())
-            else if (tag === 'img' && n.src) lines.push(`![](${n.src})`)
-            else if (tag === 'a' && n.href)
-              lines.push(`[${(n.textContent ?? '').trim()}](${n.href})`)
-            else if (tag === 'pre') lines.push('```\n' + (n.textContent ?? '').trim() + '\n```')
-            else walk(n)
-          }
-        }
-        walk(root)
-        return {
-          title: document.title,
-          url: location.href,
-          markdown: lines.filter(Boolean).join('\n\n'),
-        }
-      },
-      world: 'MAIN',
-    })
+    let result = await _extractCrawl()
+    let _diag = result?.__err || ''
+    if (result?.__err) result = null
+    if (!result?.markdown) {
+      // 后台 tab 未激活时 MAIN world 注入可能返回空：激活后重试一次
+      await chrome.tabs.update(tabId, { active: true }).catch(() => {})
+      await new Promise(r => setTimeout(r, 2500))
+      const retry = await _extractCrawl()
+      if (retry?.__err) _diag = retry.__err
+      else result = retry
+      _diag = _diag || (result ? 'empty-markdown' : 'undefined-result')
+    }
+    if (!result)
+      throw Object.assign(new Error('正文提取失败（页面未就绪）' + (_diag ? ' / ' + _diag : '')), {
+        code: -32003,
+      })
     return { ...result, chars: result?.markdown?.length ?? 0 }
   } finally {
     if (created && tabId) {

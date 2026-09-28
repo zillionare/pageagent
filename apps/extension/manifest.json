@@ -76,20 +76,12 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "http://*/*",
-        "https://*/*"
-      ],
-      "js": [
-        "bundles/content.js"
-      ],
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["bundles/content.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "https://*.xiaohongshu.com/*",
-        "https://creator.xiaohongshu.com/*"
-      ],
+      "matches": ["https://*.xiaohongshu.com/*", "https://creator.xiaohongshu.com/*"],
       "js": [
         "content/xpress-common.js",
         "content/xpress-xhs-actions.js",
@@ -98,9 +90,7 @@
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "https://*.zhihu.com/*"
-      ],
+      "matches": ["https://*.zhihu.com/*"],
       "js": [
         "content/xpress-common.js",
         "content/xpress-zhihu-actions.js",
@@ -116,13 +106,9 @@
   },
   "web_accessible_resources": [
     {
-      "resources": [
-        "bundles/inject.js",
-        "bundles/platforms/*.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
+      "resources": ["bundles/inject.js", "bundles/platforms/*.js"],
+      "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "version": "1.4.73"
 }
