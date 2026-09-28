@@ -1,7 +1,7 @@
 // PageAgent popup：桥地址设置 + 占用检测/接管（quantclaw）。Chrome 可跑在任意机器，桥地址存 chrome.storage.sync。
 const DEFAULT_BRIDGE = 'http://192.168.0.102:8787'
 
-document.getElementById('openOfficial')?.addEventListener('click', (e) => {
+document.getElementById('openOfficial')?.addEventListener('click', e => {
   e.preventDefault()
   chrome.tabs.create({ url: 'https://md.doocs.org' })
   window.close()
@@ -27,8 +27,11 @@ async function refresh() {
     const j = await r.json().catch(() => ({}))
     lastHealth = j
     if (status) {
+      const occ = j.occupants || {}
+      const c = occ.crawler ? `${occ.crawler.peer}` : '无'
+      const w = occ.writer ? `${occ.writer.peer}` : '无'
       status.textContent = r.ok
-        ? `桥连通（${j.connected ? `已被 ${j.occupant ?? '?'} 连接` : '无扩展连接'}）`
+        ? `桥连通（crawler: ${c} / writer: ${w}）`
         : `桥不通: HTTP ${r.status}`
       status.style.color = r.ok ? '#0a0' : '#c00'
     }
@@ -52,14 +55,92 @@ async function refreshOccupant() {
     if (!occ && lastHealth && lastHealth.connected && !myConn && lastHealth.occupant) {
       occ = String(lastHealth.occupant)
     }
+    const st2 = await chrome.storage.sync.get({ pageagent_occupant_role: '' })
     if (occ && box && txt) {
-      txt.textContent = `桥被占用：${occ} 正在连接。要在此机器接管（踢掉对方）吗？`
+      const rl = st2.pageagent_occupant_role ? `（${st2.pageagent_occupant_role} 席位）` : ''
+      txt.textContent = `桥${rl}被占用：${occ} 正在连接。要在此机器接管（踢掉对方）吗？`
       box.style.display = 'block'
     } else if (box) {
       box.style.display = 'none'
     }
   } catch {}
 }
+
+async function refreshRole() {
+  const el = document.getElementById('roleStatus')
+  const sel = document.getElementById('roleSel')
+  if (!el) return
+  try {
+    const st = await chrome.storage.sync.get({
+      pageagent_role: '',
+      pageagent_connected: false,
+      pageagent_connected_role: '',
+      pageagent_bridge_error: '',
+      pageagent_kicked_at: 0,
+      pageagent_kicked_role: '',
+      pageagent_disconnected: false,
+    })
+    if (sel && st.pageagent_role) sel.value = st.pageagent_role
+    let txt
+    if (!st.pageagent_role || st.pageagent_disconnected) {
+      txt = '未登录（本机不接入桥）'
+    } else {
+      txt = `已登录：${st.pageagent_role}`
+      txt +=
+        st.pageagent_connected && st.pageagent_connected_role === st.pageagent_role
+          ? ' · 桥已连接'
+          : ' · 未连接'
+    }
+    if (st.pageagent_bridge_error) txt += ` · ${st.pageagent_bridge_error}`
+    if (st.pageagent_kicked_at && Date.now() - st.pageagent_kicked_at < 60000) {
+      txt += ` · 已被同角色新连接接管`
+    }
+    el.textContent = txt
+    el.style.color = st.pageagent_bridge_error ? '#c00' : '#666'
+  } catch {}
+}
+
+document.getElementById('roleLogin')?.addEventListener('click', async () => {
+  const role = document.getElementById('roleSel')?.value || 'writer'
+  const pwd = (document.getElementById('rolePwd')?.value || '').trim()
+  const el = document.getElementById('roleStatus')
+  if (!pwd) {
+    if (el) el.textContent = '请输入口令'
+    return
+  }
+  await chrome.storage.sync.set({
+    pageagent_role: role,
+    pageagent_pwd: pwd,
+    pageagent_disconnected: false,
+    pageagent_bridge_error: '',
+  })
+  try {
+    await chrome.storage.sync.remove([
+      'pageagent_bridge_error',
+      'pageagent_kicked_at',
+      'pageagent_kicked_role',
+    ])
+  } catch {}
+  if (el) el.textContent = `正在以 ${role} 登录…`
+  setTimeout(refreshRole, 1500)
+})
+
+document.getElementById('roleLogout')?.addEventListener('click', async () => {
+  await chrome.storage.sync.set({
+    pageagent_disconnected: true,
+    pageagent_role: '',
+    pageagent_pwd: '',
+  })
+  try {
+    await chrome.storage.sync.remove([
+      'pageagent_connected_role',
+      'pageagent_kicked_at',
+      'pageagent_kicked_role',
+    ])
+  } catch {}
+  const el = document.getElementById('roleStatus')
+  if (el) el.textContent = '已退出（本机不再接入桥）'
+})
 
 document.getElementById('takeover')?.addEventListener('click', async () => {
   const txt = document.getElementById('occupantText')
@@ -77,9 +158,13 @@ document.getElementById('saveBridge')?.addEventListener('click', async () => {
   const v = (input?.value ?? '').trim().replace(/\/$/, '') || DEFAULT_BRIDGE
   await chrome.storage.sync.set({ pageagent_bridge: v })
   // 通知 SW 重连
-  try { await chrome.runtime.sendMessage({ type: 'pageagent-bridge-changed', base: v }) } catch {}
+  try {
+    await chrome.runtime.sendMessage({ type: 'pageagent-bridge-changed', base: v })
+  } catch {}
   await refresh()
 })
 
-refresh().then(refreshOccupant)
-setInterval(() => { refresh().then(refreshOccupant) }, 3000)
+refresh().then(refreshOccupant).then(refreshRole)
+setInterval(() => {
+  refresh().then(refreshOccupant).then(refreshRole)
+}, 3000)
