@@ -185,12 +185,24 @@ class PageAgentBridgeClient {
     } catch {
       return
     }
+    if (msg.type === 'hello') {
+      try {
+        chrome.storage.local.set({
+          pageagent_conn_id: msg.connId || '',
+          pageagent_connected_role: msg.role || '',
+          pageagent_connected: true,
+        })
+      } catch {}
+      return
+    }
     if (msg.type === 'kicked') {
       console.log(`[PageAgent] 本机 ${msg.role ?? ''} 席位已被同角色新连接接管`)
       try {
         chrome.storage.local.set({
           pageagent_kicked_at: Date.now(),
           pageagent_kicked_role: msg.role ?? '',
+          pageagent_connected: false,
+          pageagent_conn_id: '',
         })
       } catch {}
       return

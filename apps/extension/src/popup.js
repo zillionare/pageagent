@@ -61,7 +61,10 @@ async function refreshOccupant() {
     // 仅检测「当前所选角色」的席位占用（另一角色不影响）
     const sel = document.getElementById('roleSel')?.value || ''
     const occRole = lastHealth?.occupants?.[sel] || null
-    const mySeatConn = !!st.pageagent_connected && String(st.pageagent_connected_role || '') === sel
+    const stc = await chrome.storage.local.get({ pageagent_conn_id: '' })
+    const isSelf = !!(occRole && occRole.connId && stc.pageagent_conn_id === occRole.connId)
+    const mySeatConn =
+      isSelf || (!!st.pageagent_connected && String(st.pageagent_connected_role || '') === sel)
     if (occRole && box && txt && !mySeatConn) {
       txt.textContent = `${sel} 席位被 ${occRole.peer} 占用。要在此机器接管（踢掉对方）吗？`
       box.style.display = 'block'
