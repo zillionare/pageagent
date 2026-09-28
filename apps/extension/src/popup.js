@@ -1,4 +1,4 @@
-// PageAgent popup：桥地址设置 + 占用检测/接管（quantclaw）。Chrome 可跑在任意机器，桥地址存 chrome.storage.sync。
+// PageAgent popup：桥地址设置 + 占用检测/接管（quantclaw）。Chrome 可跑在任意机器，桥地址存 chrome.storage.local。
 const DEFAULT_BRIDGE = 'http://192.168.0.102:8787'
 
 document.getElementById('openOfficial')?.addEventListener('click', e => {
@@ -48,7 +48,10 @@ async function refreshOccupant() {
   const box = document.getElementById('occupantBox')
   const txt = document.getElementById('occupantText')
   try {
-    const st = await chrome.storage.sync.get({ pageagent_occupant: '', pageagent_connected: false })
+    const st = await chrome.storage.local.get({
+      pageagent_occupant: '',
+      pageagent_connected: false,
+    })
     let occ = String(st.pageagent_occupant || '')
     const myConn = !!st.pageagent_connected
     // 桥上有连接但不是本机 → 被占用（/health 直接给占用者 IP，不依赖本机曾收过 409）
@@ -73,7 +76,7 @@ async function refreshRole() {
   const sel = document.getElementById('roleSel')
   if (!el) return
   try {
-    const st = await chrome.storage.sync.get({
+    const st = await chrome.storage.local.get({
       pageagent_role: '',
       pageagent_connected: false,
       pageagent_connected_role: '',
@@ -104,14 +107,14 @@ async function refreshRole() {
 
 document.getElementById('roleLogin')?.addEventListener('click', async () => {
   const role = document.getElementById('roleSel')?.value || 'writer'
-  await chrome.storage.sync.set({
+  await chrome.storage.local.set({
     pageagent_role: role,
     pageagent_pwd: '',
     pageagent_disconnected: false,
     pageagent_bridge_error: '',
   })
   try {
-    await chrome.storage.sync.remove([
+    await chrome.storage.local.remove([
       'pageagent_bridge_error',
       'pageagent_kicked_at',
       'pageagent_kicked_role',
@@ -123,13 +126,13 @@ document.getElementById('roleLogin')?.addEventListener('click', async () => {
 })
 
 document.getElementById('roleLogout')?.addEventListener('click', async () => {
-  await chrome.storage.sync.set({
+  await chrome.storage.local.set({
     pageagent_disconnected: true,
     pageagent_role: '',
     pageagent_pwd: '',
   })
   try {
-    await chrome.storage.sync.remove([
+    await chrome.storage.local.remove([
       'pageagent_connected_role',
       'pageagent_kicked_at',
       'pageagent_kicked_role',
@@ -144,7 +147,7 @@ document.getElementById('takeover')?.addEventListener('click', async () => {
   const sel = document.getElementById('roleSel')?.value || 'writer'
   if (txt) txt.textContent = `正在以 ${sel} 接管（踢掉同角色对方）…`
   try {
-    await chrome.storage.sync.set({
+    await chrome.storage.local.set({
       pageagent_role: sel,
       pageagent_pwd: '',
       pageagent_disconnected: false,

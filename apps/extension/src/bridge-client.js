@@ -35,10 +35,10 @@ class PageAgentBridgeClient {
     this.role = ''
     try {
       chrome.storage.onChanged.addListener((chg, area) => {
-        if (area !== 'sync') return
+        if (area !== 'sync' && area !== 'local') return
         if (chg.pageagent_force_takeover?.newValue) {
           this.forceTakeover = true
-          chrome.storage.sync.remove('pageagent_force_takeover').catch(() => {})
+          chrome.storage.local.remove('pageagent_force_takeover').catch(() => {})
           this.wake()
         }
         if (chg.pageagent_role || chg.pageagent_pwd || chg.pageagent_disconnected) {
@@ -69,7 +69,7 @@ class PageAgentBridgeClient {
         // 未登录：待机不连（旧版扩展会以 legacy writer 接入，新版必须显式登录角色）
         this._markDisconnected()
         try {
-          await chrome.storage.sync.set({ pageagent_connected_role: '' })
+          await chrome.storage.local.set({ pageagent_connected_role: '' })
         } catch {}
         await new Promise(r => setTimeout(r, 8000))
         continue
@@ -87,7 +87,7 @@ class PageAgentBridgeClient {
   }
   async _getAuth() {
     try {
-      const st = await chrome.storage.sync.get({
+      const st = await chrome.storage.local.get({
         pageagent_role: '',
         pageagent_pwd: '',
         pageagent_disconnected: false,
@@ -112,7 +112,7 @@ class PageAgentBridgeClient {
     if (resp.status === 401) {
       this.authError = 'bad-password'
       try {
-        await chrome.storage.sync.set({ pageagent_bridge_error: '密码错误，请重新登录' })
+        await chrome.storage.local.set({ pageagent_bridge_error: '' })
       } catch {}
       console.log('[PageAgent] 登录口令错误')
       throw new Error('bad-password')
@@ -128,7 +128,7 @@ class PageAgentBridgeClient {
       this.occupant = occupant
       this.connected = false
       try {
-        await chrome.storage.sync.set({
+        await chrome.storage.local.set({
           pageagent_occupant: occupant,
           pageagent_occupant_role: role,
           pageagent_occupied_at: Date.now(),
@@ -142,14 +142,14 @@ class PageAgentBridgeClient {
     this.occupant = null
     this.authError = ''
     try {
-      await chrome.storage.sync.remove([
+      await chrome.storage.local.remove([
         'pageagent_occupant',
         'pageagent_occupied_at',
         'pageagent_bridge_error',
       ])
     } catch {}
     try {
-      await chrome.storage.sync.set({
+      await chrome.storage.local.set({
         pageagent_connected: true,
         pageagent_connected_role: auth.role,
       })
@@ -175,7 +175,7 @@ class PageAgentBridgeClient {
   }
   async _markDisconnected() {
     try {
-      await chrome.storage.sync.set({ pageagent_connected: false })
+      await chrome.storage.local.set({ pageagent_connected: false })
     } catch {}
   }
   _handle(line) {
@@ -188,7 +188,7 @@ class PageAgentBridgeClient {
     if (msg.type === 'kicked') {
       console.log(`[PageAgent] 本机 ${msg.role ?? ''} 席位已被同角色新连接接管`)
       try {
-        chrome.storage.sync.set({
+        chrome.storage.local.set({
           pageagent_kicked_at: Date.now(),
           pageagent_kicked_role: msg.role ?? '',
         })
